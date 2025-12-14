@@ -1,214 +1,210 @@
 #!/bin/bash
 # ============================================================
-# PDF Translator - Linux/macOS Installation Script
-# 2025 Sven Kalinowski with small help of Lino Casu
+# PDF Translator Enhanced v2.0 - Linux/macOS Installation Script
+# © 2025 Sven Kalinowski with small help of Lino Casu
 # Licensed under the Anti-Capitalist Software License v1.4
 # ============================================================
 
 set -e
 
-echo ""
-echo "============================================================"
-echo "   PDF Translator - Installation"
-echo "   Now with Marker support for scientific PDFs"
-echo "============================================================"
-echo ""
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+print_header() {
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}   PDF Translator Enhanced v2.0 - Installation${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+}
+
+print_step() {
+    echo -e "${YELLOW}[$1]${NC} $2"
+}
+
+print_ok() {
+    echo -e "${GREEN}OK${NC} - $1"
+}
+
+print_error() {
+    echo -e "${RED}ERROR:${NC} $1"
+}
 
 # Detect OS
-OS="$(uname -s)"
-case "${OS}" in
-    Linux*)     PLATFORM=Linux;;
-    Darwin*)    PLATFORM=Mac;;
-    *)          PLATFORM="UNKNOWN"
-esac
-echo "Detected system: $PLATFORM"
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)     OS="Linux";;
+        Darwin*)    OS="macOS";;
+        *)          OS="Unknown";;
+    esac
+    echo "$OS"
+}
+
+print_header
+OS=$(detect_os)
+echo -e "System: ${BOLD}$OS${NC}"
+echo ""
 
 # ============================================================
-# [1/9] Check Python
+# [1/5] Check Python
 # ============================================================
-echo ""
-echo "[1/9] Checking Python..."
+print_step "1/5" "Checking Python..."
+
 if ! command -v python3 &> /dev/null; then
-    echo "ERROR: Python3 not found!"
-    echo "Please install Python 3.10+:"
-    if [ "$PLATFORM" = "Linux" ]; then
-        echo "  sudo apt install python3 python3-venv python3-pip"
-    else
-        echo "  brew install python3"
+    print_error "Python 3 not found!"
+    echo ""
+    if [ "$OS" = "Linux" ]; then
+        echo -e "Install with: ${CYAN}sudo apt install python3 python3-venv python3-pip${NC}"
+    elif [ "$OS" = "macOS" ]; then
+        echo -e "Install with: ${CYAN}brew install python3${NC}"
     fi
     exit 1
 fi
-python3 --version
+
+PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
+print_ok "Python $PYTHON_VERSION found."
 
 # ============================================================
-# [2/9] Check/Install Ollama
+# [2/5] Create Virtual Environment
 # ============================================================
-echo ""
-echo "[2/9] Checking Ollama..."
-if ! command -v ollama &> /dev/null; then
-    echo "Ollama not installed."
-    read -p "Install Ollama now? (y/n): " INSTALL_OLLAMA
-    if [[ "$INSTALL_OLLAMA" =~ ^[yY]$ ]]; then
-        echo "Installing Ollama..."
-        curl -fsSL https://ollama.ai/install.sh | sh
-    fi
-else
-    echo "Ollama is installed."
-    ollama --version
-fi
+print_step "2/5" "Creating virtual environment..."
 
-# ============================================================
-# [3/9] Start Ollama service
-# ============================================================
-echo ""
-echo "[3/9] Starting Ollama service..."
-if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-    echo "Ollama is already running."
-else
-    if command -v ollama &> /dev/null; then
-        echo "Starting Ollama in background..."
-        nohup ollama serve > /dev/null 2>&1 &
-        sleep 3
-        if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-            echo "Ollama started!"
-        else
-            echo "WARNING: Could not start Ollama."
-        fi
-    fi
-fi
-
-# ============================================================
-# [4/9] Create virtual environment
-# ============================================================
-echo ""
-echo "[4/9] Creating virtual environment..."
 if [ ! -d "venv" ]; then
     python3 -m venv venv
-    echo "Virtual environment created."
+    print_ok "Virtual environment created."
 else
-    echo "Virtual environment already exists."
+    print_ok "Virtual environment already exists."
 fi
 
-# ============================================================
-# [5/9] Activate venv
-# ============================================================
-echo ""
-echo "[5/9] Activating virtual environment..."
+# Activate venv
 source venv/bin/activate
 
 # ============================================================
-# [6/9] Install dependencies
+# [3/5] Install Dependencies
 # ============================================================
-echo ""
-echo "[6/9] Upgrading pip and installing dependencies..."
-pip install --upgrade pip
+print_step "3/5" "Installing Python dependencies..."
+
+pip install --upgrade pip > /dev/null 2>&1
 pip install -r requirements.txt
 
-# ============================================================
-# [7/9] Check LaTeX
-# ============================================================
-echo ""
-echo "[7/9] Checking LaTeX..."
-if ! command -v pdflatex &> /dev/null; then
-    echo "pdflatex not found."
-    read -p "Install LaTeX now? (y/n): " INSTALL_LATEX
-    if [[ "$INSTALL_LATEX" =~ ^[yY]$ ]]; then
-        if [ "$PLATFORM" = "Linux" ]; then
-            echo "Installing TeX Live..."
-            sudo apt update
-            sudo apt install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended
-        elif [ "$PLATFORM" = "Mac" ]; then
-            if command -v brew &> /dev/null; then
-                echo "Installing BasicTeX..."
-                brew install --cask basictex
-            fi
-        fi
-    fi
-else
-    echo "LaTeX found!"
-fi
+print_ok "Dependencies installed."
 
 # ============================================================
-# [8/9] Check Pandoc
+# [4/5] Check/Install Ollama
 # ============================================================
-echo ""
-echo "[8/9] Checking Pandoc..."
-if ! command -v pandoc &> /dev/null; then
-    echo "Pandoc not found."
-    if [ "$PLATFORM" = "Linux" ]; then
-        sudo apt install -y pandoc 2>/dev/null || echo "Pandoc installation skipped."
-    elif [ "$PLATFORM" = "Mac" ]; then
-        brew install pandoc 2>/dev/null || echo "Pandoc installation skipped."
-    fi
-else
-    echo "Pandoc found!"
-fi
+print_step "4/5" "Checking Ollama..."
 
-# ============================================================
-# [9/9] Ollama Model Setup
-# ============================================================
-echo ""
-echo "[9/9] Ollama Model Setup..."
-echo ""
-echo "============================================================"
-echo "   Ollama Model Setup"
-echo "============================================================"
-echo ""
-
-if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-    echo "Ollama not running. Skipping model setup."
-else
-    echo "Installed models:"
-    ollama list 2>/dev/null || echo "  (none)"
+if ! command -v ollama &> /dev/null; then
     echo ""
-    echo "Recommended models for translation:"
-    echo "   8 GB VRAM:  llama3.2:3b      2 GB"
-    echo "  12 GB VRAM:  qwen2.5:7b       4.4 GB  BEST"
-    echo "  16 GB VRAM:  mistral-nemo:12b 7.1 GB"
-    echo "  24 GB VRAM:  qwen2.5:14b      9 GB"
+    echo -e "${YELLOW}Ollama not found.${NC}"
     echo ""
-    echo "Enter model name to download, u to update, or n to skip:"
-    read -p "Choice [qwen2.5:7b]: " PULL_MODEL
+    read -p "Install Ollama now? (y/n) [y]: " INSTALL_OLLAMA
+    INSTALL_OLLAMA=${INSTALL_OLLAMA:-y}
     
-    if [ -z "$PULL_MODEL" ]; then
-        PULL_MODEL="qwen2.5:7b"
-    fi
-    
-    if [[ "$PULL_MODEL" =~ ^[nN]$ ]]; then
-        echo "Skipping model setup."
-    elif [[ "$PULL_MODEL" =~ ^[uU]$ ]]; then
-        read -p "Which model to update? " UPDATE_MODEL
-        if [ -n "$UPDATE_MODEL" ]; then
-            echo "Updating $UPDATE_MODEL..."
-            ollama pull "$UPDATE_MODEL"
-        fi
+    if [[ "$INSTALL_OLLAMA" =~ ^[Yy]$ ]]; then
+        echo "Installing Ollama..."
+        curl -fsSL https://ollama.ai/install.sh | sh
+        print_ok "Ollama installed."
     else
-        echo "Downloading $PULL_MODEL..."
-        ollama pull "$PULL_MODEL"
+        echo "Skipping Ollama installation."
+        echo -e "Install later from: ${CYAN}https://ollama.ai${NC}"
+    fi
+else
+    print_ok "Ollama found."
+    
+    # Start Ollama if not running
+    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo "Starting Ollama..."
+        nohup ollama serve > /dev/null 2>&1 &
+        sleep 3
     fi
 fi
 
 # ============================================================
-# Clear cache
+# [5/5] Model Selection
 # ============================================================
 echo ""
-echo "Clearing Python cache..."
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+echo -e "${CYAN}============================================================${NC}"
+echo -e "${CYAN}   Select a Model to Download${NC}"
+echo -e "${CYAN}============================================================${NC}"
+echo ""
+echo " SMALL (4 GB VRAM):"
+echo "   1) gemma2:2b        - 1.6 GB - Basic, fast"
+echo "   2) phi3:mini        - 2.3 GB - Good quality"
+echo "   3) llama3.2:3b      - 2.0 GB - Good, 128K context"
+echo ""
+echo " MEDIUM (8 GB VRAM):"
+echo "   4) mistral:7b       - 4.1 GB - Very good"
+echo -e "   ${GREEN}5) qwen2.5:7b       - 4.4 GB - BEST for translations [RECOMMENDED]${NC}"
+echo "   6) llama3.1:8b      - 4.7 GB - Very good, 128K context"
+echo ""
+echo " LARGE (16 GB VRAM):"
+echo "   7) qwen2.5:14b      - 9.0 GB - Excellent, multilingual"
+echo "   8) deepseek-coder-v2:16b - 9.0 GB - Technical/Code"
+echo ""
+echo " XL (24+ GB VRAM):"
+echo "   9) mistral-small:22b - 13 GB - Premium quality"
+echo "  10) qwen2.5:32b      - 19 GB - Top multilingual"
+echo "  11) gpt-oss:20b      - 12 GB - Strong general"
+echo ""
+echo " CLOUD (No GPU needed):"
+echo "  12) gpt-oss:120b-cloud     - Cloud, requires 'ollama signin'"
+echo "  13) deepseek-v3.1:671b-cloud - Maximum quality, cloud"
+echo ""
+echo "   0) Skip model download"
+echo ""
 
-# ============================================================
-# Done
-# ============================================================
+read -p "Enter choice (0-13) [5]: " MODEL_CHOICE
+MODEL_CHOICE=${MODEL_CHOICE:-5}
+
+case $MODEL_CHOICE in
+    0) MODEL="";;
+    1) MODEL="gemma2:2b";;
+    2) MODEL="phi3:mini";;
+    3) MODEL="llama3.2:3b";;
+    4) MODEL="mistral:7b";;
+    5) MODEL="qwen2.5:7b";;
+    6) MODEL="llama3.1:8b";;
+    7) MODEL="qwen2.5:14b";;
+    8) MODEL="deepseek-coder-v2:16b";;
+    9) MODEL="mistral-small:22b";;
+    10) MODEL="qwen2.5:32b";;
+    11) MODEL="gpt-oss:20b";;
+    12) MODEL="gpt-oss:120b-cloud";;
+    13) MODEL="deepseek-v3.1:671b-cloud";;
+    *) MODEL="";;
+esac
+
+if [ -n "$MODEL" ]; then
+    echo ""
+    echo "Downloading $MODEL..."
+    echo "This may take several minutes depending on model size."
+    echo ""
+    
+    if ollama pull "$MODEL"; then
+        print_ok "Model $MODEL downloaded successfully!"
+    else
+        echo ""
+        echo -e "${YELLOW}WARNING:${NC} Model download failed."
+        echo "For cloud models, run: ollama signin"
+    fi
+fi
+
 echo ""
-echo "============================================================"
-echo "   Installation Complete!"
-echo "============================================================"
+echo -e "${GREEN}============================================================${NC}"
+echo -e "${GREEN}   Installation Complete!${NC}"
+echo -e "${GREEN}============================================================${NC}"
 echo ""
-echo "Start the app with:"
-echo "  ./run.sh"
+echo "To start the translator, run:"
+echo -e "  ${CYAN}./run.sh${NC}"
 echo ""
-echo "Or manually:"
-echo "  source venv/bin/activate"
-echo "  python gradio_app.py"
+echo "For public URL (share with others):"
+echo -e "  ${CYAN}./run.sh --share${NC}"
 echo ""
-echo "============================================================"
+echo -e "${GREEN}============================================================${NC}"
 echo ""
