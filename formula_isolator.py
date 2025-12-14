@@ -101,6 +101,9 @@ UNICODE_MATH_PATTERNS = [
     (r'\d+[.,]\d+\s*[×·]\s*10\s*[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+\s*[a-zA-Zμµ]+', 'sci_notation_unit'),
     (r'\d+[.,]\d+\s*[×·]\s*10\s*[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', 'sci_notation'),
     
+    # Decimal numbers with units (protect from locale conversion)
+    (r'\d+\.\d+\s*(?:Hz|kHz|MHz|GHz|THz|nm|μm|µm|mm|cm|m|km|Å|pm|fm|ns|μs|µs|ms|s|eV|keV|MeV|GeV|TeV|K|°C|Pa|kPa|MPa|GPa|J|kJ|W|kW|MW|V|mV|kV|A|mA|μA|Ω|kΩ|MΩ|F|μF|nF|pF|H|mH|T|mol|M|L|mL|g|mg|μg|kg)\b', 'decimal_unit'),
+    
     # Subscript/superscript sequences
     (r'[₀₁₂₃₄₅₆₇₈₉₊₋₌ₐₑₒₓₕₖₗₘₙₚₛₜ]+', 'subscript_seq'),
     (r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼ⁿⁱ]+', 'superscript_seq'),
