@@ -81,6 +81,45 @@ FORMULA_PATTERNS = [
     (r'\\\(.*?\\\)', 'inline_paren'),
 ]
 
+# =============================================================================
+# UNICODE MATH PATTERNS - CRITICAL FOR SCIENTIFIC PDFs
+# =============================================================================
+# These patterns protect Unicode math symbols that get destroyed during translation
+
+UNICODE_MATH_PATTERNS = [
+    # Physics equations with Unicode (e.g., Schrödinger: iħ∂Ψ/∂t = ĤΨ)
+    (r'[iℏħ]\s*[∂∇]\s*[ΨΦψφ]\s*/\s*[∂∇]\s*[trxyz]', 'schrodinger'),
+    (r'[ĤĥH]\s*[ΨΦψφ]\s*[=]\s*[EΕε]\s*[ΨΦψφ]', 'eigenvalue'),
+    
+    # Greek letter sequences (2+ chars = likely formula)
+    (r'[αβγδεζηθικλμνξοπρσςτυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩϕϵϑϱϖ]{2,}', 'greek_seq'),
+    
+    # Math operator sequences
+    (r'[∂∇∫∮∑∏√∞±∓≈≠≤≥≪≫∝∈∉⊂⊃∪∩∧∨⊕⊗⊥∥†‡×÷·]+', 'operator_seq'),
+    
+    # Scientific notation with Unicode
+    (r'\d+\.?\d*\s*[×·]\s*10\s*[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', 'sci_notation'),
+    
+    # Subscript/superscript sequences
+    (r'[₀₁₂₃₄₅₆₇₈₉₊₋₌ₐₑₒₓₕₖₗₘₙₚₛₜ]+', 'subscript_seq'),
+    (r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼ⁿⁱ]+', 'superscript_seq'),
+    
+    # Special physics constants
+    (r'[ℏħℓ℘ℜℑ]', 'physics_const'),
+    
+    # Modified letters (hat, etc.)
+    (r'[ĤĥĜĝŴŵŜŝÂâÊêÎîÔôÛû]', 'modified_letter'),
+    
+    # Arrows in equations
+    (r'[→←↔⇒⇐⇔↑↓⟶⟵⟷⟹⟸⟺]', 'arrow'),
+    
+    # Numbers with units (protect the whole expression)
+    (r'\d+\.?\d*\s*(?:Hz|kHz|MHz|GHz|THz|nm|μm|µm|mm|cm|m|km|Å|pm|fm|ns|μs|µs|ms|s|eV|keV|MeV|GeV|TeV|K|°C|Pa|kPa|MPa|GPa|J|kJ|W|kW|MW|V|mV|kV|A|mA|μA|Ω|kΩ|MΩ|F|μF|nF|pF|H|mH|T|mol|M|L|mL|g|mg|μg|kg)\b', 'unit_expr'),
+]
+
+# All patterns combined for extraction
+ALL_MATH_PATTERNS = FORMULA_PATTERNS + [(p, t) for p, t in UNICODE_MATH_PATTERNS]
+
 # Commands that should be extracted but aren't math
 COMMAND_PATTERNS = [
     # Citations
@@ -170,8 +209,8 @@ def extract_formulas(text: str) -> IsolationResult:
                 return True
         return False
     
-    # First pass: extract all formula patterns
-    all_patterns = FORMULA_PATTERNS + COMMAND_PATTERNS
+    # First pass: extract all formula patterns (including Unicode math)
+    all_patterns = ALL_MATH_PATTERNS + COMMAND_PATTERNS
     
     for pattern, formula_type in all_patterns:
         for match in re.finditer(pattern, text, re.DOTALL):
@@ -438,6 +477,240 @@ def check_formula_integrity(original: str, translated: str) -> Dict:
             result["is_valid"] = False
     
     return result
+
+
+# =============================================================================
+# UTF-8 ENFORCEMENT
+# =============================================================================
+
+def audit_utf8(text: str, source: str = "unknown") -> List[str]:
+    """
+    Audit text for UTF-8 issues and potential encoding problems.
+    
+    Returns list of warnings. Empty list = all good.
+    """
+    warnings = []
+    
+    # Check for replacement characters (indicates encoding loss)
+    if '?' in text and text.count('?') > 5:
+        # Could be legitimate question marks or encoding failures
+        # Check if ? appears in suspicious patterns
+        if re.search(r'\?\?+', text):  # Multiple ?? in a row
+            warnings.append(f"[{source}] Possible encoding loss: found '??' pattern")
+    
+    if '\ufffd' in text:
+        count = text.count('\ufffd')
+        warnings.append(f"[{source}] Found {count} replacement characters (U+FFFD)")
+    
+    # Check for common encoding corruption patterns
+    corruption_patterns = [
+        (r'Ã¤', 'ä'),  # UTF-8 decoded as Latin-1
+        (r'Ã¶', 'ö'),
+        (r'Ã¼', 'ü'),
+        (r'Ã©', 'é'),
+        (r'â€™', "'"),
+        (r'â€"', '–'),
+        (r'â€œ', '"'),
+    ]
+    
+    for pattern, should_be in corruption_patterns:
+        if pattern in text:
+            warnings.append(f"[{source}] Encoding corruption: '{pattern}' should be '{should_be}'")
+    
+    return warnings
+
+
+def ensure_utf8_safe(text: str) -> str:
+    """
+    Ensure text is safely encodable as UTF-8.
+    
+    Does NOT drop characters - raises error if impossible.
+    """
+    try:
+        # Encode and decode to verify
+        encoded = text.encode('utf-8')
+        decoded = encoded.decode('utf-8')
+        return decoded
+    except UnicodeError as e:
+        logger.error(f"UTF-8 encoding failed: {e}")
+        raise ValueError(f"Text contains characters that cannot be encoded as UTF-8: {e}")
+
+
+# =============================================================================
+# OUTPUT NORMALIZATION
+# =============================================================================
+
+def normalize_output(text: str, mode: str = "unicode") -> str:
+    """
+    Normalize output to a single consistent representation.
+    
+    Modes:
+    - "unicode": Keep Unicode math, remove HTML/raw LaTeX
+    - "latex": Convert to LaTeX math mode
+    - "plain": Convert to plain text approximation
+    
+    This prevents mixing HTML, LaTeX, and Unicode in the same output.
+    """
+    result = text
+    
+    if mode == "unicode":
+        # Remove HTML tags, keep Unicode
+        result = re.sub(r'<sup>([^<]+)</sup>', lambda m: _to_superscript(m.group(1)), result)
+        result = re.sub(r'<sub>([^<]+)</sub>', lambda m: _to_subscript(m.group(1)), result)
+        result = re.sub(r'</?[a-zA-Z][^>]*>', '', result)  # Remove remaining HTML
+        
+        # Remove raw LaTeX commands that weren't rendered
+        # But keep math-mode content
+        result = re.sub(r'\\textbf\{([^}]+)\}', r'\1', result)
+        result = re.sub(r'\\textit\{([^}]+)\}', r'\1', result)
+        result = re.sub(r'\\emph\{([^}]+)\}', r'\1', result)
+        
+    elif mode == "latex":
+        # Convert Unicode to LaTeX
+        result = _unicode_to_latex(result)
+        
+        # Convert HTML to LaTeX
+        result = re.sub(r'<sup>([^<]+)</sup>', r'^{\1}', result)
+        result = re.sub(r'<sub>([^<]+)</sub>', r'_{\1}', result)
+        result = re.sub(r'<b>([^<]+)</b>', r'\\textbf{\1}', result)
+        result = re.sub(r'<i>([^<]+)</i>', r'\\textit{\1}', result)
+        result = re.sub(r'</?[a-zA-Z][^>]*>', '', result)
+        
+    elif mode == "plain":
+        # Remove all formatting
+        result = re.sub(r'<[^>]+>', '', result)
+        result = re.sub(r'\$[^$]+\$', '[formula]', result)
+        result = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', result)
+    
+    return result
+
+
+def _to_superscript(text: str) -> str:
+    """Convert text to Unicode superscript."""
+    sup_map = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+               '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+               '+': '⁺', '-': '⁻', '=': '⁼', 'n': 'ⁿ', 'i': 'ⁱ',
+               '*': '∗', ',': '⸴'}
+    return ''.join(sup_map.get(c, c) for c in text)
+
+
+def _to_subscript(text: str) -> str:
+    """Convert text to Unicode subscript."""
+    sub_map = {'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+               '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+               '+': '₊', '-': '₋', '=': '₌', 'a': 'ₐ', 'e': 'ₑ',
+               'o': 'ₒ', 'x': 'ₓ', 'n': 'ₙ'}
+    return ''.join(sub_map.get(c, c) for c in text)
+
+
+def _unicode_to_latex(text: str) -> str:
+    """Convert Unicode math to LaTeX."""
+    # Import from latex_build to avoid duplication
+    try:
+        from latex_build import sanitize_for_latex
+        return sanitize_for_latex(text)
+    except ImportError:
+        # Fallback minimal conversion
+        conversions = {
+            'α': r'$\alpha$', 'β': r'$\beta$', 'γ': r'$\gamma$',
+            'Ψ': r'$\Psi$', 'ψ': r'$\psi$', 'Φ': r'$\Phi$', 'φ': r'$\varphi$',
+            '∇': r'$\nabla$', '∂': r'$\partial$', '∫': r'$\int$',
+            'ℏ': r'$\hbar$', 'ħ': r'$\hbar$',
+            '∞': r'$\infty$', '±': r'$\pm$', '×': r'$\times$',
+        }
+        for unicode_char, latex in conversions.items():
+            text = text.replace(unicode_char, latex)
+        return text
+
+
+# =============================================================================
+# REGRESSION CHECKS
+# =============================================================================
+
+def regression_check(original: str, translated: str, restored: str) -> Dict:
+    """
+    Comprehensive regression check for translation quality.
+    
+    Returns dict with pass/fail status and detailed issues.
+    """
+    result = {
+        "passed": True,
+        "issues": [],
+        "stats": {
+            "original_length": len(original),
+            "translated_length": len(translated),
+            "restored_length": len(restored),
+            "formulas_original": 0,
+            "formulas_restored": 0,
+        }
+    }
+    
+    # Check 1: No '??' corruption patterns
+    if re.search(r'\?\?+', restored):
+        result["passed"] = False
+        result["issues"].append("CRITICAL: Found '??' pattern indicating encoding loss")
+    
+    # Check 2: No replacement characters
+    if '\ufffd' in restored:
+        result["passed"] = False
+        result["issues"].append(f"CRITICAL: Found {restored.count(chr(0xFFFD))} replacement characters")
+    
+    # Check 3: All placeholders were reinserted
+    remaining_placeholders = re.findall(r'⟦[A-Z]+_[a-f0-9]+_\d+⟧', restored)
+    if remaining_placeholders:
+        result["passed"] = False
+        result["issues"].append(f"ERROR: {len(remaining_placeholders)} unrestored placeholders")
+    
+    # Check 4: Formula count preserved
+    orig_result = extract_formulas(original)
+    rest_result = extract_formulas(restored)
+    
+    result["stats"]["formulas_original"] = len(orig_result.formulas)
+    result["stats"]["formulas_restored"] = len(rest_result.formulas)
+    
+    if len(rest_result.formulas) < len(orig_result.formulas) * 0.9:  # Allow 10% tolerance
+        result["passed"] = False
+        result["issues"].append(
+            f"WARNING: Formula count dropped from {len(orig_result.formulas)} to {len(rest_result.formulas)}"
+        )
+    
+    # Check 5: No raw HTML leaked
+    if re.search(r'<(sup|sub|b|i|em|strong)[^>]*>', restored, re.IGNORECASE):
+        result["issues"].append("WARNING: Raw HTML tags found in output")
+    
+    # Check 6: Length sanity (translated shouldn't be drastically different)
+    length_ratio = len(restored) / max(len(original), 1)
+    if length_ratio < 0.5 or length_ratio > 2.0:
+        result["issues"].append(f"WARNING: Unusual length ratio: {length_ratio:.2f}")
+    
+    return result
+
+
+def assert_no_corruption(text: str, raise_on_fail: bool = False) -> bool:
+    """
+    Quick assertion that text has no obvious corruption.
+    
+    Use this as a sanity check at key pipeline stages.
+    """
+    issues = []
+    
+    if re.search(r'\?\?+', text):
+        issues.append("Found '??' corruption pattern")
+    
+    if '\ufffd' in text:
+        issues.append("Found replacement character")
+    
+    if re.search(r'⟦[A-Z]+_[a-f0-9]+_\d+⟧', text):
+        issues.append("Found unrestored placeholder")
+    
+    if issues:
+        msg = f"Corruption detected: {'; '.join(issues)}"
+        logger.error(msg)
+        if raise_on_fail:
+            raise ValueError(msg)
+        return False
+    
+    return True
 
 
 # =============================================================================
