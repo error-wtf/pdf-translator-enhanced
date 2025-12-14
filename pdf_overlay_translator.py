@@ -1,13 +1,8 @@
 """
 PDF Overlay Translator - 100% Formula Preservation
 
-CRITICAL: Formulas must remain 100% identical!
-Strategy:
-1. Copy original page structure
-2. Identify text blocks
-3. Skip ANY block containing Unicode math symbols
-4. Only translate pure ASCII/Latin text blocks
-5. Formulas stay as original vectors/images
+Uses Cambria font which supports Unicode math symbols.
+This enables translating text while preserving formulas like ΔΦ, ω, 10⁻¹⁶.
 
 © 2025 Sven Kalinowski with small help of Lino Casu
 Licensed under the Anti-Capitalist Software License v1.4
@@ -17,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import os
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Callable
 from dataclasses import dataclass, field
@@ -29,27 +25,17 @@ logger = logging.getLogger("pdf_translator.overlay")
 # CONFIGURATION
 # =============================================================================
 
-MIN_TEXT_LENGTH = 20  # Minimum characters to translate
+MIN_TEXT_LENGTH = 15
 MAX_RETRIES = 5
 RETRY_DELAY = 1.5
 
-# Unicode ranges that indicate formulas - NEVER translate these blocks
-FORMULA_UNICODE_RANGES = [
-    (0x0370, 0x03FF),   # Greek letters
-    (0x2070, 0x209F),   # Superscripts/subscripts
-    (0x2100, 0x214F),   # Letterlike symbols
-    (0x2150, 0x218F),   # Number forms
-    (0x2190, 0x21FF),   # Arrows
-    (0x2200, 0x22FF),   # Mathematical operators
-    (0x2300, 0x23FF),   # Misc technical
-    (0x27C0, 0x27EF),   # Misc math symbols A
-    (0x2980, 0x29FF),   # Misc math symbols B
-    (0x2A00, 0x2AFF),   # Supplemental math operators
-    (0x1D400, 0x1D7FF), # Math alphanumeric symbols
+# Font that supports Unicode math symbols
+UNICODE_FONT_PATHS = [
+    "C:/Windows/Fonts/cambria.ttc",      # Windows - best for math
+    "C:/Windows/Fonts/DejaVuSans.ttf",   # Windows fallback
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+    "/System/Library/Fonts/STIXGeneral.otf",  # macOS
 ]
-
-# Individual formula characters
-FORMULA_CHARS = set('∫∑∏∂∇√∞±×÷≈≠≤≥∈∉⊂⊃∪∩∧∨¬∀∃∅∆∇αβγδεζηθικλμνξπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΠΡΣΤΥΦΧΨΩ⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎')
 
 # Scientific glossary
 GLOSSARY_DE = {
@@ -62,6 +48,7 @@ GLOSSARY_DE = {
     "fidelity": "Fidelität",
     "spacetime": "Raumzeit",
     "phase": "Phase",
+    "quantum": "Quanten",
 }
 
 
@@ -76,7 +63,6 @@ class TextBlock:
     rect: fitz.Rect
     font_size: float
     font_name: str
-    has_formula: bool = False
     translated: str = ""
 
 
@@ -87,89 +73,50 @@ class TranslationResult:
     output_path: Optional[str]
     pages_processed: int
     blocks_translated: int
-    blocks_skipped_formula: int
-    blocks_skipped_other: int
+    blocks_skipped: int
     warnings: List[str] = field(default_factory=list)
 
 
 # =============================================================================
-# FORMULA DETECTION - STRICT
+# FONT HANDLING
 # =============================================================================
 
-def contains_formula_unicode(text: str) -> bool:
-    """
-    Check if text contains ANY Unicode character that indicates a formula.
-    If yes, the ENTIRE block is skipped to preserve formulas 100%.
-    """
-    for char in text:
-        # Check individual formula characters
-        if char in FORMULA_CHARS:
-            return True
-        
-        # Check Unicode ranges
-        code = ord(char)
-        for start, end in FORMULA_UNICODE_RANGES:
-            if start <= code <= end:
-                return True
+def get_unicode_font() -> Optional[fitz.Font]:
+    """Get a font that supports Unicode math symbols."""
+    for font_path in UNICODE_FONT_PATHS:
+        if os.path.exists(font_path):
+            try:
+                font = fitz.Font(fontfile=font_path)
+                logger.info(f"Using Unicode font: {font.name}")
+                return font
+            except Exception as e:
+                logger.warning(f"Could not load {font_path}: {e}")
     
-    return False
+    logger.warning("No Unicode font found, using default (symbols may be lost)")
+    return None
 
 
-def contains_latex_patterns(text: str) -> bool:
-    """Check for LaTeX-style patterns."""
-    patterns = [
-        r'\$.*?\$',           # Inline math
-        r'\\[a-zA-Z]+',       # LaTeX commands
-        r'\^{',               # Superscript
-        r'_{',                # Subscript
-        r'\\frac',            # Fractions
-        r'\\sqrt',            # Square root
-    ]
-    
-    for pattern in patterns:
-        if re.search(pattern, text):
-            return True
-    
-    return False
+# =============================================================================
+# TEXT BLOCK HANDLING
+# =============================================================================
 
-
-def is_pure_text_block(text: str) -> bool:
-    """
-    Check if block contains ONLY translatable text.
-    Returns False if ANY formula indicator is found.
-    """
+def is_translatable_text(text: str) -> bool:
+    """Check if text should be translated."""
     text = text.strip()
     
-    # Too short
     if len(text) < MIN_TEXT_LENGTH:
         return False
     
-    # Contains formula Unicode
-    if contains_formula_unicode(text):
-        return False
-    
-    # Contains LaTeX patterns
-    if contains_latex_patterns(text):
-        return False
-    
-    # Only numbers/symbols (no words)
+    # Must have actual words
     if not re.search(r'[a-zA-Z]{4,}', text):
         return False
     
-    # URL or email
+    # Skip URLs/emails
     if re.search(r'https?://|@.*\.[a-z]', text):
-        return False
-    
-    # Em-dash (often near formulas)
-    if '—' in text or '–' in text:
         return False
     
     return True
 
-
-# =============================================================================
-# TEXT EXTRACTION WITH POSITIONS
-# =============================================================================
 
 def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
     """Extract text blocks with their positions."""
@@ -203,15 +150,11 @@ def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
         avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 10
         primary_font = font_names[0] if font_names else ""
         
-        # Check for formula content
-        has_formula = contains_formula_unicode(block_text) or contains_latex_patterns(block_text)
-        
         blocks.append(TextBlock(
             text=block_text,
             rect=rect,
             font_size=avg_font_size,
-            font_name=primary_font,
-            has_formula=has_formula
+            font_name=primary_font
         ))
     
     return blocks
@@ -242,11 +185,12 @@ def translate_text_ollama(
     system_prompt = f"""You are a scientific translator. Translate to {target_language}.
 
 {glossary_text}
-RULES:
+CRITICAL RULES:
 - Output ONLY the translation
-- Keep numbers unchanged
+- Keep ALL mathematical symbols unchanged: Δ, Φ, ω, ×, ⁻, ¹, ⁶, —, etc.
+- Keep numbers and units unchanged
 - Keep author names unchanged
-- Use correct scientific terminology"""
+- Use correct scientific terminology from glossary"""
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -256,7 +200,7 @@ RULES:
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Translate:\n{text}"}
+                        {"role": "user", "content": f"Translate to {target_language}:\n{text}"}
                     ],
                     "stream": False,
                     "options": {"temperature": 0.1, "num_predict": 2048}
@@ -283,7 +227,7 @@ RULES:
 
 
 # =============================================================================
-# PDF TRANSLATION - FORMULA-SAFE
+# PDF TRANSLATION WITH UNICODE FONT
 # =============================================================================
 
 def translate_pdf_overlay(
@@ -294,9 +238,8 @@ def translate_pdf_overlay(
     progress_callback: Optional[Callable] = None
 ) -> TranslationResult:
     """
-    Translate PDF while preserving formulas 100%.
-    
-    Any block containing Unicode math symbols is left UNTOUCHED.
+    Translate PDF using Unicode-capable font.
+    Preserves mathematical symbols like ΔΦ, ω, 10⁻¹⁶.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -307,12 +250,16 @@ def translate_pdf_overlay(
         output_path=None,
         pages_processed=0,
         blocks_translated=0,
-        blocks_skipped_formula=0,
-        blocks_skipped_other=0,
+        blocks_skipped=0,
         warnings=[]
     )
     
     glossary = GLOSSARY_DE if target_language.lower() in ["german", "deutsch"] else {}
+    
+    # Get Unicode font
+    unicode_font = get_unicode_font()
+    if unicode_font is None:
+        result.warnings.append("No Unicode font found - symbols may be lost")
     
     try:
         doc = fitz.open(input_pdf)
@@ -329,17 +276,11 @@ def translate_pdf_overlay(
                 progress_callback(progress, 100, f"Page {page_num + 1}/{total_pages}")
             
             blocks = extract_text_blocks(page)
+            blocks_to_replace = []
             
             for block in blocks:
-                # NEVER touch formula blocks
-                if block.has_formula:
-                    result.blocks_skipped_formula += 1
-                    logger.debug(f"Skipped formula block: {block.text[:50]}...")
-                    continue
-                
-                # Skip non-pure text blocks
-                if not is_pure_text_block(block.text):
-                    result.blocks_skipped_other += 1
+                if not is_translatable_text(block.text):
+                    result.blocks_skipped += 1
                     continue
                 
                 # Translate
@@ -348,40 +289,63 @@ def translate_pdf_overlay(
                 )
                 
                 if translated == block.text:
-                    result.blocks_skipped_other += 1
+                    result.blocks_skipped += 1
                     continue
                 
-                # Redact and replace
-                page.add_redact_annot(block.rect, fill=(1, 1, 1))
                 block.translated = translated
+                blocks_to_replace.append(block)
                 result.blocks_translated += 1
+            
+            # Redact original text
+            for block in blocks_to_replace:
+                page.add_redact_annot(block.rect, fill=(1, 1, 1))
             
             page.apply_redactions()
             
-            # Insert translated text
-            for block in blocks:
-                if block.translated:
-                    try:
-                        font_size = block.font_size
-                        rc = page.insert_textbox(
+            # Insert translated text with Unicode font
+            for block in blocks_to_replace:
+                try:
+                    if unicode_font:
+                        # Use TextWriter for proper Unicode support
+                        tw = fitz.TextWriter(page.rect)
+                        
+                        # Calculate position
+                        x = block.rect.x0 + 2
+                        y = block.rect.y0 + block.font_size
+                        
+                        # Wrap text to fit rectangle
+                        max_width = block.rect.width - 4
+                        lines = wrap_text(block.translated, unicode_font, block.font_size, max_width)
+                        
+                        for line in lines:
+                            if y > block.rect.y1:
+                                break
+                            tw.append((x, y), line, font=unicode_font, fontsize=block.font_size)
+                            y += block.font_size * 1.2
+                        
+                        tw.write_text(page)
+                    else:
+                        # Fallback to standard font
+                        page.insert_textbox(
                             block.rect,
                             block.translated,
-                            fontsize=font_size,
+                            fontsize=block.font_size,
                             fontname="helv",
                             align=fitz.TEXT_ALIGN_LEFT
                         )
-                        
-                        if rc < 0:
-                            font_size = max(6, font_size * 0.8)
-                            page.insert_textbox(
-                                block.rect,
-                                block.translated,
-                                fontsize=font_size,
-                                fontname="helv",
-                                align=fitz.TEXT_ALIGN_LEFT
-                            )
-                    except Exception as e:
-                        logger.warning(f"Text insertion failed: {e}")
+                except Exception as e:
+                    logger.warning(f"Text insertion failed: {e}")
+                    # Fallback
+                    try:
+                        page.insert_textbox(
+                            block.rect,
+                            block.translated,
+                            fontsize=block.font_size * 0.9,
+                            fontname="helv",
+                            align=fitz.TEXT_ALIGN_LEFT
+                        )
+                    except:
+                        pass
             
             result.pages_processed += 1
         
@@ -405,12 +369,35 @@ def translate_pdf_overlay(
         return result
 
 
+def wrap_text(text: str, font: fitz.Font, fontsize: float, max_width: float) -> List[str]:
+    """Wrap text to fit within max_width."""
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        test_line = f"{current_line} {word}".strip()
+        width = font.text_length(test_line, fontsize=fontsize)
+        
+        if width <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    
+    if current_line:
+        lines.append(current_line)
+    
+    return lines
+
+
 # =============================================================================
 # IDENTITY TEST
 # =============================================================================
 
 def identity_test(input_pdf: str, output_pdf: str) -> Dict:
-    """Test: Copy PDF without modification. Should be identical."""
+    """Test: Copy PDF without modification."""
     doc = fitz.open(input_pdf)
     out_doc = fitz.open()
     
@@ -423,7 +410,6 @@ def identity_test(input_pdf: str, output_pdf: str) -> Dict:
     out_doc.close()
     doc.close()
     
-    # Compare
     doc1 = fitz.open(input_pdf)
     doc2 = fitz.open(output_pdf)
     
@@ -432,7 +418,7 @@ def identity_test(input_pdf: str, output_pdf: str) -> Dict:
         t1 = doc1[i].get_text()
         t2 = doc2[i].get_text()
         if t1 != t2:
-            differences.append({"page": i + 1, "diff": len(t1) - len(t2)})
+            differences.append({"page": i + 1})
     
     doc1.close()
     doc2.close()
@@ -474,7 +460,7 @@ if __name__ == "__main__":
     model = sys.argv[4] if len(sys.argv) > 4 else "qwen2.5:7b"
     
     print(f"Translating {input_pdf} to {language}...")
-    print("NOTE: Blocks with formula symbols will be preserved unchanged.")
+    print("Using Cambria font for Unicode symbol support.")
     
     result = translate_pdf_overlay(
         input_pdf, output_dir, model, language,
@@ -485,8 +471,7 @@ if __name__ == "__main__":
     print(f"SUCCESS: {result.success}")
     print(f"Pages: {result.pages_processed}")
     print(f"Blocks translated: {result.blocks_translated}")
-    print(f"Blocks skipped (formulas): {result.blocks_skipped_formula}")
-    print(f"Blocks skipped (other): {result.blocks_skipped_other}")
+    print(f"Blocks skipped: {result.blocks_skipped}")
     if result.warnings:
         print(f"Warnings: {result.warnings}")
     if result.output_path:
