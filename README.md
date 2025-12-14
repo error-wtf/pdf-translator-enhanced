@@ -2,6 +2,8 @@
 
 **Translate scientific PDFs while preserving LaTeX formulas and document structure**
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/error-wtf/pdf-translator-enhanced/blob/main/PDF_Translator_Colab.ipynb)
+
 > 🔗 **Based on:** [thelanguagenerd/pdf-translator](https://github.com/thelanguagenerd/pdf-translator)  
 > This is an enhanced fork with improved formula preservation, table detection, and multi-language support.
 
