@@ -59,6 +59,14 @@ VRAM_OPTIONS_ALL = [
     ("96 GB (Enterprise / Multi-GPU)", 96),
 ]
 
+# Ollama cloud models (remote inference; requires internet + Ollama signin)
+OLLAMA_CLOUD_MODELS: List[str] = [
+    "gpt-oss:20b-cloud",
+    "gpt-oss:120b-cloud",
+    "deepseek-v3.1:671b-cloud",
+    "qwen3-coder:480b-cloud",
+]
+
 
 def get_available_vram_options() -> List[Tuple[str, int]]:
     """Returns VRAM options up to the next tier above detected VRAM."""
@@ -115,6 +123,9 @@ def get_vram_capacity_info(vram_gb: int, model_name: str = None) -> str:
         get_page_estimate_for_vram, get_token_limit_for_vram,
         get_model_context_length, DEFAULT_CONTEXT_LENGTH
     )
+
+    if model_name and model_name.endswith("-cloud"):
+        return "☁️ **Cloud model** | VRAM independent (requires internet + `ollama signin`)"
     
     if model_name:
         # Model-specific capacity
@@ -220,6 +231,14 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
         label = f"{status_marker} {m['name']} ({m['size_gb']} GB) - {m['description']}"
         choices.append((label, m["name"]))
         seen_models.add(name)
+
+    # THIRD: Add Ollama cloud models (remote inference) as extra options
+    for cloud_model in OLLAMA_CLOUD_MODELS:
+        if cloud_model in seen_models:
+            continue
+        label = f"☁️ {cloud_model} [CLOUD] - runs on ollama.com (requires internet + ollama signin)"
+        choices.append((label, cloud_model))
+        seen_models.add(cloud_model)
     
     return choices
 
@@ -259,197 +278,35 @@ def pull_ollama_model(model_name: str, force_update: bool = False, progress=gr.P
     
     if not check_ollama_installed():
         return "❌ Ollama not reachable! Please start Ollama first."
+
+    if model_name.endswith("-cloud"):
+        if not is_model_installed(model_name):
+            msg = pull_model(model_name)
+            if not msg:
+                return "☁️ Cloud model: pull failed. Ensure you are signed in: run `ollama signin` (Ollama v0.12+)."
+        return "☁️ Cloud model selected. If it doesn't work, run `ollama signin` and try again."
     
     # Check if already installed
     if is_model_installed(model_name) and not force_update:
         installed = get_installed_models()
         for m in installed:
             if m == model_name or m.startswith(model_name.split(":")[0] + ":"):
-                return f"💾 Model '{m}' is already installed!\n\nClick 'Update Model' to update to the latest version."
+                return f"✅ Model already installed: {m}" 
     
-    action = "Updating" if force_update else "Downloading"
-    progress(0, desc=f"{action} {model_name}...")
-    
+    # Progress callback
     def progress_callback(status: str, percent: int):
-        progress(percent / 100, desc=f"{status} ({percent}%)")
+        progress(percent / 100, desc=status)
     
+    # Pull model
     success = pull_model(model_name, progress_callback)
-    
     if success:
-        if force_update:
-            return f"✅ Model '{model_name}' successfully updated!"
-        return f"✅ Model '{model_name}' successfully downloaded!"
-    return f"❌ Error downloading '{model_name}'"
+        return f"✅ Model downloaded: {model_name}" 
+    return f"❌ Failed to download model: {model_name}" 
 
 
 def update_ollama_model(model_name: str, progress=gr.Progress()):
-    """Updates an Ollama model to the latest version."""
+    """Forces update of an Ollama model."""
     return pull_ollama_model(model_name, force_update=True, progress=progress)
-
-
-def translate_latex_file_handler(
-    tex_file,
-    job_dir: Path,
-    target_language: str,
-    target_lang_code: str,
-    use_openai: bool,
-    openai_api_key: str,
-    use_ollama: bool,
-    ollama_model: str,
-    latex_source_dir: str = "",
-    progress=gr.Progress(),
-) -> Tuple[Optional[str], str]:
-    """
-    Handles LaTeX file translation - perfect 1:1 output!
-    """
-    import shutil
-    import subprocess
-    
-    progress(0.1, desc="Processing LaTeX file...")
-    
-    # Copy original .tex file
-    original_name = Path(tex_file.name).stem
-    tex_path = job_dir / f"{original_name}.tex"
-    shutil.copy(tex_file.name, tex_path)
-    
-    # Copy all supporting files from source directory (images, bib, sty, etc.)
-    # Use user-provided source directory if available, otherwise try parent of uploaded file
-    if latex_source_dir and latex_source_dir.strip():
-        source_dir = Path(latex_source_dir.strip())
-        logger.info(f"Using user-provided source directory: {source_dir}")
-    else:
-        source_dir = Path(tex_file.name).parent
-        logger.info(f"Using uploaded file's parent directory: {source_dir}")
-    
-    copied_count = 0
-    online_mode_warning = ""
-    if source_dir.exists():
-        for ext in ['*.png', '*.jpg', '*.jpeg', '*.pdf', '*.eps', '*.bib', '*.sty', '*.cls', '*.bst', '*.PNG', '*.JPG', '*.PDF']:
-            for file in source_dir.glob(ext):
-                if file.name != Path(tex_file.name).name:  # Don't copy the tex file again
-                    try:
-                        shutil.copy(file, job_dir / file.name)
-                        logger.info(f"Copied supporting file: {file.name}")
-                        copied_count += 1
-                    except Exception as e:
-                        logger.warning(f"Could not copy {file.name}: {e}")
-        if copied_count > 0:
-            logger.info(f"Copied {copied_count} supporting files from {source_dir}")
-    else:
-        logger.warning(f"Source directory does not exist: {source_dir}")
-        online_mode_warning = "\n\n⚠️ **Online Mode:** Image folder not accessible. For .tex files with images, run locally!"
-    
-    # Output path
-    output_tex = job_dir / f"{original_name}_translated.tex"
-    
-    progress(0.2, desc=f"Translating LaTeX to {target_language}...")
-    
-    # Translate using latex_translator
-    if use_ollama:
-        success = translate_latex_file(
-            str(tex_path),
-            str(output_tex),
-            ollama_model,
-            target_language,
-            progress_callback=lambda c, t, s: progress(0.2 + 0.6 * c / max(t, 1), desc=s),
-            use_openai=False
-        )
-    elif use_openai and openai_api_key:
-        success = translate_latex_file(
-            str(tex_path),
-            str(output_tex),
-            "",  # model not used for OpenAI
-            target_language,
-            progress_callback=lambda c, t, s: progress(0.2 + 0.6 * c / max(t, 1), desc=s),
-            use_openai=True,
-            openai_api_key=openai_api_key
-        )
-    else:
-        return None, "❌ Please select Ollama or OpenAI backend with valid API key."
-    
-    if not success:
-        return None, "❌ LaTeX translation failed!"
-    
-    progress(0.85, desc="Compiling PDF (this may take a while)...")
-    
-    # Try to compile to PDF
-    try:
-        # Use just the filename, not full path, since we set cwd
-        tex_filename = output_tex.name
-        
-        # Find pdflatex - check common locations on Windows
-        pdflatex_cmd = "pdflatex"
-        if os.name == 'nt':  # Windows
-            miktex_paths = [
-                Path(os.environ.get('LOCALAPPDATA', '')) / "Programs" / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
-                Path("C:/MiKTeX/miktex/bin/x64/pdflatex.exe"),
-                Path(os.environ.get('ProgramFiles', '')) / "MiKTeX" / "miktex" / "bin" / "x64" / "pdflatex.exe",
-            ]
-            for miktex_path in miktex_paths:
-                if miktex_path.exists():
-                    pdflatex_cmd = str(miktex_path)
-                    logger.info(f"Found pdflatex at: {pdflatex_cmd}")
-                    break
-        
-        # Run pdflatex twice for references (longer timeout for complex docs)
-        for run in range(2):
-            progress(0.85 + run * 0.05, desc=f"Compiling PDF (pass {run+1}/2)...")
-            result = subprocess.run(
-                [pdflatex_cmd, "-interaction=nonstopmode", "-halt-on-error", tex_filename],
-                cwd=str(job_dir),
-                capture_output=True,
-                timeout=300  # 5 minutes per run for complex documents
-            )
-            logger.info(f"pdflatex run {run+1}: returncode={result.returncode}")
-            
-            # Check if PDF was created after first run
-            output_pdf = job_dir / f"{original_name}_translated.pdf"
-            if output_pdf.exists() and run == 0:
-                # First run succeeded, do second run for references
-                continue
-            elif not output_pdf.exists() and run == 0:
-                # First run failed, log and try once more
-                stderr = result.stderr.decode('utf-8', errors='ignore')
-                if stderr:
-                    logger.warning(f"pdflatex stderr: {stderr[:1000]}")
-        
-        output_pdf = job_dir / f"{original_name}_translated.pdf"
-        if output_pdf.exists():
-            progress(1.0, desc="Complete!")
-            return str(output_pdf), f"✅ LaTeX translated and compiled! Output: {output_pdf.name}{online_mode_warning}"
-        else:
-            # Log error for debugging
-            stderr = result.stderr.decode('utf-8', errors='ignore')
-            stdout = result.stdout.decode('utf-8', errors='ignore')
-            logger.warning(f"PDF not created. returncode={result.returncode}")
-            if stderr:
-                logger.warning(f"stderr: {stderr[:500]}")
-            # Check log file for errors
-            log_file = job_dir / f"{original_name}_translated.log"
-            if log_file.exists():
-                log_content = log_file.read_text(errors='ignore')
-                # Find error lines
-                error_lines = [l for l in log_content.split('\n') if '!' in l or 'Error' in l]
-                if error_lines:
-                    logger.warning(f"LaTeX errors: {error_lines[:5]}")
-    except subprocess.TimeoutExpired:
-        logger.warning("pdflatex timed out after 5 minutes")
-    except FileNotFoundError:
-        logger.warning("pdflatex not found in PATH or MiKTeX locations")
-    except Exception as e:
-        logger.warning(f"PDF compilation failed: {e}")
-    
-    # Return .tex file if PDF compilation failed
-    # Check for missing images in log
-    log_file = job_dir / f"{original_name}_translated.log"
-    missing_files_hint = ""
-    if log_file.exists():
-        log_content = log_file.read_text(errors='ignore')
-        if "not found" in log_content.lower() and (".png" in log_content or ".jpg" in log_content or ".pdf" in log_content):
-            missing_files_hint = "\n⚠️ Missing image files! Place images in same folder as .tex file before uploading."
-    
-    progress(1.0, desc="Complete (PDF compilation skipped)")
-    return str(output_tex), f"✅ LaTeX translated! Output: {output_tex.name}\n(PDF compilation failed - compile manually with pdflatex){missing_files_hint}{online_mode_warning}"
 
 
 def translate_pdf(
@@ -459,264 +316,192 @@ def translate_pdf(
     backend: str,
     openai_api_key: str,
     ollama_model: str,
-    latex_source_dir: str = "",
+    latex_source_dir=None,
     progress=gr.Progress(),
-) -> Tuple[Optional[str], str]:
-    """
-    Main function: Translate PDF or LaTeX file.
+):
+    """Main translation function."""
     
-    Returns:
-        Tuple[Optional[str], str]: (Path to output file or None, Status message)
-    """
-    if pdf_file is None:
-        return None, "❌ Please upload a PDF or .tex file!"
+    # Validate inputs
+    if not pdf_file:
+        return None, "❌ Please upload a PDF file!"
     
-    # Check if it's a LaTeX file
-    is_latex = pdf_file.name.lower().endswith('.tex')
-    use_marker = "Marker" in extraction_mode
+    if backend == "OpenAI" and not openai_api_key:
+        return None, "❌ Please enter your OpenAI API key!"
     
-    # Backend validation
-    use_openai = backend == "OpenAI"
-    use_ollama = backend == "Ollama (Local)"
+    if backend == "Ollama (Local)" and not ollama_model:
+        return None, "❌ Please select an Ollama model!"
+
+    if backend == "Ollama (Local)" and ollama_model and ollama_model.endswith("-cloud"):
+        return None, "☁️ Selected a cloud model. Ensure internet access and run `ollama signin` if needed."
     
-    logger.info(f"translate_pdf: backend='{backend}', use_ollama={use_ollama}, use_marker={use_marker}")
+    # Create job directory
+    job_id = str(uuid4())
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
     
-    if use_openai and not openai_api_key:
-        return None, "❌ OpenAI selected, but no API key provided!"
+    # Copy uploaded PDF
+    pdf_path = job_dir / "original.pdf"
+    if hasattr(pdf_file, "name"):
+        # Gradio file object
+        import shutil
+        shutil.copy(pdf_file.name, pdf_path)
+    else:
+        # Path string
+        import shutil
+        shutil.copy(pdf_file, pdf_path)
     
-    if use_ollama:
-        if not check_ollama_installed():
-            return None, "❌ Ollama not reachable! Please start Ollama first."
-        if not ollama_model:
-            return None, "❌ Ollama selected, but no model chosen!"
-    
-    target_lang_code = LANGUAGES.get(target_language, "en")
+    logger.info(f"Starting translation job {job_id}")
     
     try:
-        # Create job ID with timestamp for multi-user support
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        job_id = f"{timestamp}_{uuid4().hex[:8]}"
-        job_dir = JOBS_DIR / job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Created job directory: {job_dir}")
-        
-        # Handle LaTeX files directly
-        if is_latex:
-            return translate_latex_file_handler(
-                pdf_file, job_dir, target_language, target_lang_code,
-                use_openai, openai_api_key, use_ollama, ollama_model, 
-                latex_source_dir, progress
-            )
-        
-        # Use Unified mode for best quality (combines all methods)
-        use_unified = "Unified" in extraction_mode
-        if use_unified:
-            if not use_ollama and not use_openai:
-                return None, "❌ Unified mode requires Ollama or OpenAI backend."
-            progress(0.02, desc="Starting unified translation (best quality)...")
-            output_path, status = translate_pdf_unified(
-                pdf_file.name,
-                str(job_dir),
-                ollama_model if use_ollama else "",
-                target_language,
-                progress_callback=lambda c, t, s: progress(c / 100, desc=s),
-                use_openai=use_openai,
-                openai_api_key=openai_api_key
-            )
-            return output_path, status
-        
-        # Use Page-by-Page mode for layout preservation with images
-        use_page_by_page = "Page-by-Page" in extraction_mode
-        if use_page_by_page:
-            if not use_ollama and not use_openai:
-                return None, "❌ Page-by-Page mode requires Ollama or OpenAI backend."
-            progress(0.02, desc="Starting page-by-page translation...")
-            output_path, status = translate_pdf_page_by_page(
-                pdf_file.name,
-                str(job_dir),
-                ollama_model if use_ollama else "",
-                target_language,
-                progress_callback=lambda c, t, s: progress(c / 100, desc=s),
-                use_openai=use_openai,
-                openai_api_key=openai_api_key
-            )
-            return output_path, status
-        
-        # Use Marker pipeline for scientific PDFs (works with both Ollama and OpenAI)
-        if use_marker:
-            if not use_ollama and not use_openai:
-                return None, "❌ Marker mode requires Ollama or OpenAI backend."
-            progress(0.02, desc="Loading Marker models (first run may take 5-10 min to download)...")
-            output_path, status = translate_pdf_with_marker(
-                pdf_file.name,
-                str(job_dir),
-                ollama_model if use_ollama else "",
-                target_language,
-                progress_callback=lambda c, t, s: progress(c / 100, desc=s),
-                use_openai=use_openai,
-                openai_api_key=openai_api_key
-            )
-            return output_path, status
-        
-        progress(0.1, desc="Analyzing PDF...")
-        
-        # Copy PDF
-        pdf_path = job_dir / "original.pdf"
-        with open(pdf_file.name, "rb") as f:
-            pdf_path.write_bytes(f.read())
-        
         # Analyze PDF
-        blocks, detected_language = analyze_pdf(pdf_path)
-        logger.info(f"Analyzed PDF: {len(blocks)} blocks, detected language: {detected_language}")
+        progress(0.05, desc="🔍 Analyzing PDF structure...")
+        pdf_info = analyze_pdf(str(pdf_path))
         
-        progress(0.3, desc=f"Translating {len(blocks)} blocks...")
-        
-        # Translate
-        translated_blocks = translate_blocks(
-            blocks,
-            source_language=detected_language,
-            target_language=target_lang_code,
-            use_openai=use_openai,
-            openai_api_key=openai_api_key if use_openai else None,
-            use_ollama=use_ollama,
-            ollama_model=ollama_model if use_ollama else None,
-        )
-        
-        progress(0.7, desc="Compiling LaTeX...")
-        
-        # Build LaTeX
-        build_and_compile(
-            job_id=job_id,
-            blocks=translated_blocks,
-            target_language=target_lang_code,
-            source_language=detected_language,
-        )
-        
-        progress(0.95, desc="Done!")
-        
-        # Result PDF
-        result_pdf = job_dir / "main.pdf"
-        if result_pdf.exists():
-            # Gradio needs the absolute path as string
-            absolute_path = str(result_pdf.resolve())
-            logger.info(f"PDF created at: {absolute_path}")
-            return absolute_path, f"✅ Translation successful! ({len(blocks)} blocks translated)\n\n📁 File: {absolute_path}"
+        # Translate based on mode
+        if extraction_mode == "Unified (Recommended)":
+            progress(0.10, desc="🚀 Starting unified translation...")
+            output_path = translate_pdf_unified(
+                str(pdf_path),
+                target_language,
+                use_openai=(backend == "OpenAI"),
+                openai_api_key=openai_api_key,
+                use_ollama=(backend == "Ollama (Local)"),
+                ollama_model=ollama_model,
+                job_dir=str(job_dir),
+                progress=progress,
+            )
+        elif extraction_mode == "Marker (Best Quality)":
+            progress(0.10, desc="🔬 Starting Marker translation...")
+            output_path = translate_pdf_with_marker(
+                str(pdf_path),
+                target_language,
+                use_openai=(backend == "OpenAI"),
+                openai_api_key=openai_api_key,
+                use_ollama=(backend == "Ollama (Local)"),
+                ollama_model=ollama_model,
+                job_dir=str(job_dir),
+                progress=progress,
+            )
+        elif extraction_mode == "Page-by-Page (Fast)":
+            progress(0.10, desc="⚡ Starting page-by-page translation...")
+            output_path = translate_pdf_page_by_page(
+                str(pdf_path),
+                target_language,
+                use_openai=(backend == "OpenAI"),
+                openai_api_key=openai_api_key,
+                use_ollama=(backend == "Ollama (Local)"),
+                ollama_model=ollama_model,
+                job_dir=str(job_dir),
+                progress=progress,
+            )
         else:
-            # Check if LaTeX log exists for error message
-            log_file = job_dir / "main.log"
-            error_msg = "PDF compilation failed."
-            if log_file.exists():
-                try:
-                    log_content = log_file.read_text(encoding="utf-8", errors="ignore")
-                    # Search for LaTeX errors
-                    for line in log_content.split("\n"):
-                        if line.startswith("!"):
-                            error_msg += f"\n\nLaTeX error: {line}"
-                            break
-                except:
-                    pass
-            return None, f"❌ {error_msg}\n\nCheck LaTeX installation (MiKTeX/TeX Live)."
+            progress(0.10, desc="📝 Starting translation...")
+            output_path = translate_blocks(
+                str(pdf_path),
+                target_language,
+                use_openai=(backend == "OpenAI"),
+                openai_api_key=openai_api_key,
+                use_ollama=(backend == "Ollama (Local)"),
+                ollama_model=ollama_model,
+                job_dir=str(job_dir),
+                progress=progress,
+            )
         
+        progress(1.0, desc="✅ Translation complete!")
+        
+        if output_path and Path(output_path).exists():
+            return output_path, f"✅ Translation complete! Job ID: {job_id}"
+        return None, f"❌ Translation failed! Check logs. Job ID: {job_id}"
+    
     except Exception as e:
-        logger.exception("Translation failed")
+        logger.exception(f"Translation error: {e}")
         return None, f"❌ Error: {str(e)}"
 
 
 def create_gradio_app():
-    """Creates the Gradio app."""
+    """Creates the Gradio interface."""
     
+    # Detect VRAM
+    detected_vram = detect_gpu_vram() or 16
+    
+    # Round up to nearest tier
+    vram_tiers = [4, 6, 8, 12, 16, 24, 32, 48, 64, 96]
+    initial_vram = detected_vram
+    for tier in vram_tiers:
+        if detected_vram <= tier:
+            initial_vram = tier
+            break
+
     with gr.Blocks(
         title="PDF Translator",
-        theme=gr.themes.Soft(primary_hue="emerald"),
+        theme=gr.themes.Soft(),
         css="""
-        .container { max-width: 900px; margin: auto; }
-        .header { text-align: center; margin-bottom: 20px; }
-        .warning { background-color: #fef3c7; padding: 10px; border-radius: 8px; margin: 10px 0; }
-        """
+        .warning {
+            background: #fffbeb;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 10px 0;
+        }
+        """,
     ) as app:
         
         gr.Markdown("""
         # 📄 PDF Translator
-        ### Translate scientific PDFs with AI
         
-        Supports **OpenAI GPT-4** and **local Ollama models**.
-        LaTeX formulas and structure are preserved.
+        Translate scientific PDFs while preserving LaTeX formulas and document structure.
         """)
         
         with gr.Tabs():
-            # === TAB 1: Translate ===
-            with gr.TabItem("🔄 Translate"):
+            # === TAB 1: Main Translator ===
+            with gr.TabItem("🚀 Translate"):
+                
                 with gr.Row():
-                    with gr.Column(scale=1):
-                        pdf_input = gr.File(
-                            label="Upload PDF or LaTeX",
-                            file_types=[".pdf", ".tex"],
-                            type="filepath",
-                        )
-                        
-                        latex_source_dir = gr.Textbox(
-                            label="LaTeX Source Directory (optional)",
-                            placeholder="E:\\path\\to\\folder\\with\\images",
-                            info="For .tex files: folder containing images/bib files",
-                            visible=True,
-                        )
+                    with gr.Column(scale=2):
+                        pdf_input = gr.File(label="Upload PDF", file_types=[".pdf"], file_count="single")
                         
                         target_lang = gr.Dropdown(
                             choices=list(LANGUAGES.keys()),
-                            value="English",
+                            value="German",
                             label="Target Language",
                         )
                         
-                        extraction_mode = gr.Radio(
+                        extraction_mode = gr.Dropdown(
                             choices=[
-                                "Unified (Best Quality - Combines All Methods)",
-                                "Page-by-Page (Layout & Images)",
-                                "Marker (Scientific PDFs)",
-                                "Standard (Fast)"
+                                "Unified (Recommended)",
+                                "Marker (Best Quality)",
+                                "Page-by-Page (Fast)",
+                                "Classic (Legacy)",
                             ],
-                            value="Unified (Best Quality - Combines All Methods)",
-                            label="PDF Extraction Mode",
-                            info="Unified: Best quality, combines Marker + PyMuPDF. Page-by-Page: Layout focus. Marker: Formula focus. Standard: Fast.",
+                            value="Unified (Recommended)",
+                            label="Extraction Mode",
                         )
                         
                         backend_choice = gr.Radio(
-                            choices=["Ollama (Local)", "OpenAI", "No Translation"],
+                            choices=["Ollama (Local)", "OpenAI"],
                             value="Ollama (Local)",
-                            label="Backend",
+                            label="LLM Backend",
                         )
                         
-                        # OpenAI Options
+                        # OpenAI group
                         with gr.Group(visible=False) as openai_group:
                             openai_key = gr.Textbox(
                                 label="OpenAI API Key",
-                                type="password",
                                 placeholder="sk-...",
-                                info="NOT stored!",
+                                type="password",
                             )
                         
-                        # Ollama Options
+                        # Ollama group
                         with gr.Group(visible=True) as ollama_group:
-                            # Dynamic VRAM options based on detected hardware
-                            available_vram = get_available_vram_options()
-                            detected_vram = detect_gpu_vram()
-                            
-                            # Select best matching option as default
-                            if detected_vram:
-                                # Find highest option that is <= detected
-                                default_option = available_vram[-1][0] if available_vram else VRAM_OPTIONS_ALL[2][0]
-                            else:
-                                default_option = available_vram[2][0] if len(available_vram) > 2 else available_vram[-1][0]
-                            
                             gr.Markdown(get_detected_vram_info())
                             
+                            vram_options = get_available_vram_options()
                             vram_select = gr.Dropdown(
-                                choices=[v[0] for v in available_vram],
-                                value=default_option,
-                                label="Your VRAM (only matching options)",
+                                choices=[label for label, _ in vram_options],
+                                value=[label for label, vram in vram_options if vram == initial_vram][0],
+                                label="Your GPU VRAM",
                             )
                             
-                            # Capacity info display
-                            initial_vram = detected_vram if detected_vram else 16
                             capacity_info = gr.Markdown(
                                 value=get_vram_capacity_info(initial_vram),
                                 elem_id="capacity_info"
@@ -860,6 +645,12 @@ def create_gradio_app():
                 1. **Install Ollama:** https://ollama.ai
                 2. **Start Ollama:** `ollama serve`
                 3. **Select a model** and click "Download Model"
+
+                ### Ollama Cloud Models (Preview)
+
+                1. Install latest Ollama (v0.12+): https://ollama.com/download
+                2. Sign in: `ollama signin`
+                3. Select a `...-cloud` model and click "Download Model"
                 
                 ### OpenAI (Cloud)
                 
