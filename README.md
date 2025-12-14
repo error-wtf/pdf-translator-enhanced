@@ -21,12 +21,14 @@ Licensed under the **Anti-Capitalist Software License v1.4**
 - **📐 Enhanced Formula Protection** - 60+ LaTeX patterns protected during translation
 - **🌍 20 Languages** - Now includes Arabic, Hebrew, Ukrainian, Hindi, and more
 - **✅ Regression Tests** - Automated quality checks for translated PDFs
+- **☁️ Ollama Cloud Support** - Run large models (up to 671B) without local GPU
 
 ---
 
 ## 🌟 Features
 
-- **🔒 100% Local Processing** - With Ollama, no data leaves your computer
+- **🔒 100% Local Processing** - With Ollama local models, no data leaves your computer
+- **☁️ Ollama Cloud Option** - Use huge models without GPU via `ollama signin`
 - **🧠 AI-Powered Translation** - Uses state-of-the-art LLMs (Llama, Mistral, GPT-4)
 - **📐 LaTeX Preservation** - Mathematical formulas remain intact
 - **🎨 Beautiful UI** - Modern Gradio interface with dark/light mode
@@ -111,6 +113,7 @@ chmod +x install.sh run.sh
 | **AMD** | ⚠️ Partial | ROCm required on Linux |
 | **Apple Silicon** | ✅ Good | M1/M2/M3 unified memory |
 | **Intel** | ⚠️ Limited | CPU fallback available |
+| **No GPU** | ☁️ Ollama Cloud | Use cloud models with `ollama signin` |
 
 ---
 
@@ -385,6 +388,12 @@ Choose from 20 languages:
 - ✅ Works offline
 - ⚠️ Requires GPU with sufficient VRAM
 
+**Ollama Cloud - For Low-End PCs**
+- ✅ No GPU required
+- ✅ Access to huge models (up to 671B parameters)
+- ⚠️ Requires internet connection
+- ⚠️ Data sent to Ollama servers
+
 **OpenAI (Cloud)**
 - ✅ Best translation quality
 - ✅ No GPU required
@@ -426,7 +435,6 @@ Choose from 20 languages:
 ## 🤖 LLM Backend Options
 
 ### Option 1: Ollama (Local) ⭐ Recommended
-
 **Advantages:**
 - 🔒 Complete privacy - data never leaves your computer
 - 💰 Free to use - no API costs
@@ -443,7 +451,51 @@ Choose from 20 languages:
 - Frequent translations
 - Users with gaming GPUs (RTX 3060+)
 
-### Option 2: OpenAI (Cloud)
+### Option 2: Ollama Cloud (Preview) ☁️ NEW
+
+**Advantages:**
+- 🚀 Access to huge models (20B, 120B, 480B, 671B parameters)
+- 💻 No GPU required - runs on Ollama's servers
+- 🔧 Easy setup - just `ollama signin`
+- 💰 Currently free during preview
+
+**Disadvantages:**
+- 🌐 Requires internet connection
+- 🔓 Data is sent to Ollama servers (ollama.com)
+- ⏳ May be slower than local models (network latency)
+
+**Best for:**
+- Users without GPU or with low VRAM
+- Google Colab users (T4 only has 16GB)
+- When you need maximum model quality
+
+**Available Cloud Models:**
+
+| Model | Parameters | Description |
+|-------|------------|-------------|
+| `gpt-oss:20b-cloud` | 20B | Good quality, fast |
+| `gpt-oss:120b-cloud` | 120B | Excellent quality |
+| `qwen3-coder:480b-cloud` | 480B | Best for technical texts |
+| `deepseek-v3.1:671b-cloud` | 671B | Maximum quality |
+
+**Setup:**
+```bash
+# 1. Install Ollama v0.12+
+# https://ollama.com/download
+
+# 2. Sign in to Ollama
+ollama signin
+
+# 3. Pull a cloud model
+ollama pull gpt-oss:120b-cloud
+
+# 4. Use it like any other model
+ollama run gpt-oss:120b-cloud
+```
+
+**Privacy Note:** When using cloud models, your PDF content is sent to Ollama's servers for processing. Use local models if you need complete privacy.
+
+### Option 3: OpenAI (Cloud)
 
 **Advantages:**
 - 🏆 Best translation quality (GPT-4)
@@ -466,6 +518,17 @@ Choose from 20 languages:
 3. Generate an API key
 4. Enter the key in the app (NOT stored permanently!)
 
+### Comparison Table
+
+| Feature | Ollama Local | Ollama Cloud | OpenAI |
+|---------|--------------|--------------|--------|
+| **Privacy** | ✅ 100% local | ⚠️ Data to Ollama | ⚠️ Data to OpenAI |
+| **GPU Required** | ✅ Yes | ❌ No | ❌ No |
+| **Internet** | ❌ Offline OK | ✅ Required | ✅ Required |
+| **Cost** | 💰 Free | 💰 Free (preview) | 💰 $0.01-0.05/page |
+| **Max Model Size** | ~70B (48GB VRAM) | 671B | GPT-4 |
+| **Speed** | ⚡ Fast | 🐢 Network latency | ⚡ Fast |
+
 ---
 
 ## 🎮 VRAM & Model Guide
@@ -482,6 +545,7 @@ Choose from 20 languages:
 | 24 GB | 22B-32B models | Excellent |
 | 32 GB+ | 70B models quantized | Premium |
 | 48 GB+ | 70B full precision | Maximum |
+| **No GPU** | ☁️ Use Ollama Cloud models | Up to 671B! |
 
 ### Recommended Models by VRAM
 
@@ -517,6 +581,7 @@ ollama pull mistral:7b-instruct-q4_0
 | `mistral:7b` | 4.1 GB | Very Good | Medium |
 | `mistral-nemo:12b` | 7.1 GB | Very Good | Slower |
 | `openchat:7b` | 4.1 GB | Very Good | Medium |
+| `gpt-oss:20b` | 12 GB | Excellent | Slower |
 
 ```bash
 ollama pull llama3.1:8b
@@ -529,6 +594,7 @@ ollama pull llama3.1:8b
 | `mistral-small:22b` | 13 GB | Excellent | Medium |
 | `codestral:22b` | 13 GB | Excellent | Medium |
 | `qwen2.5:32b` | 19 GB | Excellent | Slower |
+| `gpt-oss:20b` | 12 GB | Excellent | Medium |
 
 ```bash
 ollama pull mistral-small:22b
@@ -544,6 +610,20 @@ ollama pull mistral-small:22b
 
 ```bash
 ollama pull mixtral:8x7b
+```
+
+#### No GPU? Use Ollama Cloud! ☁️
+
+| Model | Parameters | Quality | Setup |
+|-------|------------|---------|-------|
+| `gpt-oss:20b-cloud` | 20B | Excellent | `ollama signin` |
+| `gpt-oss:120b-cloud` | 120B | Premium | `ollama signin` |
+| `qwen3-coder:480b-cloud` | 480B | Maximum | `ollama signin` |
+| `deepseek-v3.1:671b-cloud` | 671B | Maximum | `ollama signin` |
+
+```bash
+ollama signin
+ollama pull gpt-oss:120b-cloud
 ```
 
 ### ChatGPT-like Open Source Alternatives
@@ -655,6 +735,19 @@ ollama pull llama3.1:8b
 ollama list
 ```
 
+#### "Cloud model not working"
+
+**Cause:** Not signed in to Ollama Cloud.
+
+**Solution:**
+```bash
+# Sign in (requires Ollama v0.12+)
+ollama signin
+
+# Then pull the cloud model
+ollama pull gpt-oss:120b-cloud
+```
+
 #### "Out of Memory" / "CUDA out of memory"
 
 **Cause:** Model is too large for your GPU VRAM.
@@ -663,10 +756,15 @@ ollama list
 1. Choose a smaller model
 2. Close other GPU-intensive applications
 3. Use a quantized version (e.g., `q4_0`)
+4. **Use Ollama Cloud models** - no GPU needed!
 
 ```bash
 # Use quantized version
 ollama pull mistral:7b-instruct-q4_0
+
+# Or use cloud model (no GPU needed)
+ollama signin
+ollama pull gpt-oss:120b-cloud
 ```
 
 #### "PDF compilation failed" / "pdflatex not found"
@@ -697,6 +795,7 @@ brew install --cask basictex
 1. Install/update NVIDIA drivers
 2. Select VRAM manually in the dropdown
 3. Use CPU mode (slower)
+4. **Use Ollama Cloud models** - no GPU needed!
 
 ```bash
 # Check GPU (Windows)
@@ -714,20 +813,7 @@ rocm-smi  # for AMD
 1. Use a larger model if you have enough VRAM
 2. Switch to OpenAI for best quality
 3. Try a different model (Mistral often works well for translations)
-
-#### "Application won't start"
-
-**Solutions:**
-```bash
-# Check Python version
-python --version  # Should be 3.10+
-
-# Reinstall dependencies
-pip install -r requirements.txt --force-reinstall
-
-# Check for port conflicts
-netstat -an | grep 7860
-```
+4. Use Ollama Cloud for larger models without GPU
 
 ### Getting Help
 
@@ -785,6 +871,14 @@ pdf-translator/
 - **No storage:** Keys are NEVER stored (no file, no database, no `.env`)
 - **No logging:** Keys are never logged; only `api_key_present=True/False`
 - **Request-local only:** Keys are used only for the current request
+
+### Data Privacy by Backend
+
+| Backend | Data Location | Privacy Level |
+|---------|---------------|---------------|
+| **Ollama Local** | Your PC only | 🔒 Maximum |
+| **Ollama Cloud** | Ollama servers | ⚠️ Moderate |
+| **OpenAI** | OpenAI servers | ⚠️ Moderate |
 
 ### Security Measures
 
