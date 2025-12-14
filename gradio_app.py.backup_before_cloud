@@ -45,15 +45,6 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pdf_translator.gradio")
 
-# Ollama Cloud Models - run on Ollama's servers, no local GPU needed
-# Requires: ollama signin (Ollama v0.12+)
-OLLAMA_CLOUD_MODELS = [
-    ("gpt-oss:20b-cloud", "20B", "GPT-OSS 20B Cloud - Good quality, fast"),
-    ("gpt-oss:120b-cloud", "120B", "GPT-OSS 120B Cloud - Excellent quality"),
-    ("qwen3-coder:480b-cloud", "480B", "Qwen3 Coder 480B Cloud - Best for technical"),
-    ("deepseek-v3.1:671b-cloud", "671B", "DeepSeek V3.1 671B Cloud - Maximum quality"),
-]
-
 # VRAM options - dynamically filtered based on detected hardware
 VRAM_OPTIONS_ALL = [
     ("4 GB (GTX 1650, GTX 1050 Ti)", 4),
@@ -114,7 +105,7 @@ def get_detected_vram_info() -> str:
         
         pages = get_page_estimate_for_vram(actual_vram)
         return f"🎮 Detected GPU VRAM: **{detected} GB** (≈{actual_vram} GB usable) → **~{pages} pages** consistent translation"
-    return "⚠️ GPU VRAM could not be detected. Please select manually or use ☁️ Cloud models."
+    return "⚠️ GPU VRAM could not be detected. Please select manually."
 
 
 def get_vram_capacity_info(vram_gb: int, model_name: str = None) -> str:
@@ -124,10 +115,6 @@ def get_vram_capacity_info(vram_gb: int, model_name: str = None) -> str:
         get_page_estimate_for_vram, get_token_limit_for_vram,
         get_model_context_length, DEFAULT_CONTEXT_LENGTH
     )
-    
-    # Check if it's a cloud model
-    if model_name and model_name.endswith("-cloud"):
-        return f"☁️ **Cloud model** - No local GPU needed | Requires `ollama signin`"
     
     if model_name:
         # Model-specific capacity
@@ -178,7 +165,7 @@ LANGUAGES = {
 
 
 def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
-    """Returns model choices - INSTALLED models first, then others, then cloud."""
+    """Returns model choices - INSTALLED models first, then others."""
     from ollama_backend import get_installed_models, OLLAMA_MODELS, DEFAULT_CONTEXT_LENGTH
     
     # Get actually installed models from Ollama
@@ -193,9 +180,6 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
         base_name = model_name.split(":")[0]
         model_info = None
         
-        # Check if it's a cloud model
-        is_cloud = model_name.endswith("-cloud")
-        
         # Try exact match first
         if model_name in OLLAMA_MODELS:
             model_info = OLLAMA_MODELS[model_name]
@@ -209,24 +193,11 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
         if model_info:
             desc = model_info.get("description", "Installed model")
             size = model_info.get("size_gb", "?")
-        elif is_cloud:
-            # Find in cloud models
-            for cloud_name, cloud_size, cloud_desc in OLLAMA_CLOUD_MODELS:
-                if cloud_name == model_name:
-                    desc = cloud_desc
-                    size = cloud_size
-                    break
-            else:
-                desc = "Cloud model"
-                size = "☁️"
         else:
             desc = "Installed model"
             size = "?"
         
-        if is_cloud:
-            label = f"☁️💾 {model_name} ({size}) [INSTALLED] - {desc}"
-        else:
-            label = f"💾 {model_name} ({size} GB) [INSTALLED] - {desc}"
+        label = f"💾 {model_name} ({size} GB) [INSTALLED] - {desc}"
         choices.append((label, model_name))
         seen_models.add(model_name)
         seen_models.add(base_name)
@@ -249,13 +220,6 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
         label = f"{status_marker} {m['name']} ({m['size_gb']} GB) - {m['description']}"
         choices.append((label, m["name"]))
         seen_models.add(name)
-    
-    # THIRD: Add cloud models (always available, no VRAM needed)
-    for cloud_name, cloud_size, cloud_desc in OLLAMA_CLOUD_MODELS:
-        if cloud_name not in seen_models:
-            label = f"☁️ {cloud_name} ({cloud_size}) - {cloud_desc}"
-            choices.append((label, cloud_name))
-            seen_models.add(cloud_name)
     
     return choices
 
@@ -295,20 +259,6 @@ def pull_ollama_model(model_name: str, force_update: bool = False, progress=gr.P
     
     if not check_ollama_installed():
         return "❌ Ollama not reachable! Please start Ollama first."
-    
-    # Check if it's a cloud model
-    if model_name.endswith("-cloud"):
-        return f"""☁️ **Cloud model selected: {model_name}**
-
-Cloud models run on Ollama's servers - no local GPU needed!
-
-**Setup required:**
-1. Update Ollama to v0.12+: https://ollama.com/download
-2. Sign in: `ollama signin`
-3. Pull model: `ollama pull {model_name}`
-
-**Note:** Cloud models require internet and send data to Ollama servers.
-For complete privacy, use local models instead."""
     
     # Check if already installed
     if is_model_installed(model_name) and not force_update:
@@ -689,7 +639,7 @@ def create_gradio_app():
         # 📄 PDF Translator
         ### Translate scientific PDFs with AI
         
-        Supports **OpenAI GPT-4**, **local Ollama models**, and **☁️ Ollama Cloud models**.
+        Supports **OpenAI GPT-4** and **local Ollama models**.
         LaTeX formulas and structure are preserved.
         """)
         
@@ -779,7 +729,7 @@ def create_gradio_app():
                             ollama_model_select = gr.Dropdown(
                                 choices=initial_choices,
                                 value=initial_model,
-                                label="Ollama Model (local + ☁️ cloud)",
+                                label="Ollama Model (only fitting your VRAM)",
                             )
                             
                             ollama_status = gr.Textbox(
@@ -896,9 +846,8 @@ def create_gradio_app():
                 | 16 GB | `llama3.1:8b` or `mistral:7b` | **Best choice for most** |
                 | 24 GB | `qwen2.5:32b` | Excellent for scientific texts |
                 | 48+ GB | `llama3.1:70b` | Premium quality, near GPT-4 |
-                | **No GPU** | ☁️ `gpt-oss:120b-cloud` | **Cloud - no GPU needed!** |
                 
-                **Note:** ✅ = Fits comfortably, ⚠️ = Works, but tight, ☁️ = Cloud (no local GPU)
+                **Note:** ✅ = Fits comfortably, ⚠️ = Works, but tight
                 """)
             
             # === TAB 3: Help ===
@@ -906,29 +855,11 @@ def create_gradio_app():
                 gr.Markdown("""
                 ## Installation
                 
-                ### Ollama Local (Recommended for privacy)
+                ### Ollama (Recommended for local use)
                 
                 1. **Install Ollama:** https://ollama.ai
                 2. **Start Ollama:** `ollama serve`
                 3. **Select a model** and click "Download Model"
-                
-                ### ☁️ Ollama Cloud (No GPU needed!)
-                
-                For users without GPU or with low VRAM:
-                
-                1. **Update Ollama** to v0.12+: https://ollama.com/download
-                2. **Sign in:** `ollama signin`
-                3. **Select a ☁️ cloud model** from the dropdown
-                4. **Pull it:** `ollama pull gpt-oss:120b-cloud`
-                
-                **Available cloud models:**
-                - `gpt-oss:20b-cloud` - Good quality, fast
-                - `gpt-oss:120b-cloud` - Excellent quality
-                - `qwen3-coder:480b-cloud` - Best for technical texts
-                - `deepseek-v3.1:671b-cloud` - Maximum quality
-                
-                ⚠️ **Note:** Cloud models send data to Ollama servers.
-                For complete privacy, use local models.
                 
                 ### OpenAI (Cloud)
                 
@@ -936,16 +867,11 @@ def create_gradio_app():
                 2. Enter key (NOT stored!)
                 3. Cost: approx. $0.01-0.05 per page
                 
-                ## Security & Privacy
-                
-                | Backend | Data Location | Privacy |
-                |---------|---------------|---------|
-                | **Ollama Local** | Your PC only | 🔒 Maximum |
-                | **Ollama Cloud** | Ollama servers | ⚠️ Moderate |
-                | **OpenAI** | OpenAI servers | ⚠️ Moderate |
+                ## Security
                 
                 - **API keys are NOT stored**
                 - Keys are only used for the current request
+                - Ollama runs completely local - no data leaves your PC
                 
                 ## Troubleshooting
                 
@@ -953,9 +879,8 @@ def create_gradio_app():
                 |---------|----------|
                 | "Ollama not reachable" | Start `ollama serve` |
                 | "Model not found" | Download model first |
-                | "Cloud model not working" | Run `ollama signin` |
                 | "PDF compilation failed" | Install LaTeX (TeX Live / MiKTeX) |
-                | "Out of Memory" | Choose smaller model or use ☁️ cloud |
+                | "Out of Memory" | Choose smaller model |
                 """)
         
         gr.Markdown("""
