@@ -28,6 +28,13 @@ gradio>=4.0.0
 # === Utilities ===
 python-multipart>=0.0.6
 
+# === Optional: Nougat OCR (better formula extraction) ===
+# Nougat is Meta's Neural Optical Understanding for Academic Documents
+# Excellent for extracting complex formulas from scientific PDFs
+# Install with: pip install nougat-ocr
+# Or for GPU: pip install nougat-ocr[gpu]
+# nougat-ocr>=0.1.17
+
 # === Optional: For development ===
 # pytest>=7.4.0
 # black>=23.0.0
