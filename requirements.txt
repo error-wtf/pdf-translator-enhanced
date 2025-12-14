@@ -27,15 +27,38 @@ gradio>=4.0.0
 
 # === Utilities ===
 python-multipart>=0.0.6
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# ============================================================
+# OPTIONAL DEPENDENCIES - Enhanced Features
+# ============================================================
+# Install these for additional capabilities.
+# The translator works without them but with reduced features.
 
 # === Optional: Nougat OCR (better formula extraction) ===
-# Nougat is Meta's Neural Optical Understanding for Academic Documents
+# Meta's Neural Optical Understanding for Academic Documents
 # Excellent for extracting complex formulas from scientific PDFs
-# Install with: pip install nougat-ocr
-# Or for GPU: pip install nougat-ocr[gpu]
+# pip install nougat-ocr        # CPU
+# pip install nougat-ocr[gpu]   # GPU (faster)
 # nougat-ocr>=0.1.17
 
-# === Optional: For development ===
+# === Optional: pix2tex (formula image recognition) ===
+# Recognizes LaTeX formulas in images
+# Useful for PDFs with embedded formula images
+# pip install pix2tex
+# pix2tex>=0.1.0
+
+# === Optional: Table Transformer (ML table detection) ===
+# Microsoft's Table Transformer for better table detection
+# pip install transformers torch torchvision
+# transformers>=4.36.0
+# torch>=2.0.0
+# torchvision>=0.15.0
+
+# ============================================================
+# DEVELOPMENT DEPENDENCIES
+# ============================================================
 # pytest>=7.4.0
 # black>=23.0.0
 # ruff>=0.1.0
