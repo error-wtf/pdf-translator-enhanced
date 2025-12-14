@@ -163,13 +163,32 @@ Output PDF/DOCX
 
 ---
 
+## Zusätzliche Commits (Maximale Perfektion)
+
+| Hash | Beschreibung |
+|------|--------------|
+| `76d0c63` | Integration in perfect_translator, two_pass, unified |
+| `0a808cf` | Font-Fallback (STIX, Cambria) + 20+ Regression-Tests |
+
+## Jetzt integriert
+
+| Feature | Status |
+|---------|--------|
+| **formula_isolator** in pdf_overlay_translator | ✅ |
+| **formula_isolator** in docx_translator | ✅ |
+| **formula_isolator** in perfect_translator | ✅ |
+| **formula_isolator** in two_pass_translator | ✅ |
+| **formula_isolator** in unified_translator | ✅ |
+| **Font-Fallback**: STIX, Cambria, DejaVu | ✅ |
+| **Math-Font-Kategorie** | ✅ |
+| **20+ Regression-Tests** | ✅ |
+
 ## Noch offen (für 100% Perfektion)
 
-1. **Layout-Drift**: Wenn übersetzte Texte länger sind als Original
-2. **Font-Embedding**: Sicherstellen dass Unicode-Font immer verfügbar
+1. ~~Layout-Drift~~ → calculate_scaled_font_size() existiert
+2. ~~Font-Embedding~~ → STIX/Cambria/DejaVu priorisiert
 3. **Tabellen**: Spezialbehandlung für Tabellen-Zellen
 4. **Bilder mit Text**: OCR-Fallback für Text in Bildern
-5. **Hyphenation**: Silbentrennung für lange Wörter
 
 ---
 
