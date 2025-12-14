@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# PDF Translator - Linux/macOS Start Script
+# PDF Translator Enhanced v2.0 - Linux/macOS Start Script
 # © 2025 Sven Kalinowski with small help of Lino Casu
 # Licensed under the Anti-Capitalist Software License v1.4
 # ============================================================
@@ -15,11 +15,17 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
+# Parse arguments
+SHARE_FLAG=""
+if [ "$1" = "--share" ] || [ "$1" = "-s" ]; then
+    SHARE_FLAG="--share"
+fi
+
 # Helper functions
 print_header() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}   PDF Translator - Starting${NC}"
+    echo -e "${CYAN}   PDF Translator v2.0 - Starting${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
 }
@@ -182,7 +188,14 @@ echo -e "${GREEN}============================================================${N
 echo -e "${GREEN}   Application Starting${NC}"
 echo -e "${GREEN}============================================================${NC}"
 echo ""
-echo -e "   URL:  ${CYAN}http://127.0.0.1:7860${NC}"
+if [ -n "$SHARE_FLAG" ]; then
+    echo -e "   Local URL:  ${CYAN}http://127.0.0.1:7860${NC}"
+    echo -e "   Public URL: ${CYAN}Will be generated...${NC}"
+else
+    echo -e "   URL:  ${CYAN}http://127.0.0.1:7860${NC}"
+    echo ""
+    echo -e "   TIP: Use ${YELLOW}./run.sh --share${NC} for a public URL"
+fi
 echo ""
 echo -e "   Press ${YELLOW}Ctrl+C${NC} to stop the server."
 echo ""
@@ -190,7 +203,7 @@ echo -e "${GREEN}============================================================${N
 echo ""
 
 # Start Gradio with error handling
-python gradio_app.py
+python gradio_app.py $SHARE_FLAG
 EXIT_CODE=$?
 
 if [ "$EXIT_CODE" != "0" ]; then
