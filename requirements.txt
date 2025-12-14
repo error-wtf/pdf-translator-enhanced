@@ -7,9 +7,8 @@ pymupdf>=1.24.0
 requests>=2.31.0
 gradio>=4.0.0
 
+# === DOCX Support (Perfect Translation) ===
+python-docx>=1.1.0
+
 # === Optional: Language Detection ===
 langdetect>=1.0.9
-
-# === Optional: LaTeX File Translation ===
-# Only needed if you want to translate .tex files
-# PyPDF2>=3.0.0
