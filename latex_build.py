@@ -60,24 +60,100 @@ def cleanup_old_jobs(max_age_hours: int = 24):
 
 
 def sanitize_for_latex(text: str) -> str:
+    """
+    Convert Unicode math symbols to LaTeX commands.
+    This is critical for scientific PDFs with formulas.
+    """
     if not text:
         return ""
 
-    replacements = {
-        "−": "-",
-        "–": "-",
-        "—": "-",
-        "…": "...",
-        "Σ": r"\Sigma",
-        "\u202f": " ",
-        "\xa0": " ",
-        "\u2009": " ",      # thin space
-        "\u2003": " ",      # em space
-        "₀": r"$_0$",       # subscript zero
-        "≤": r"\leq ",
+    # === GREEK LETTERS ===
+    greek_upper = {
+        "Α": r"A", "Β": r"B", "Γ": r"$\Gamma$", "Δ": r"$\Delta$",
+        "Ε": r"E", "Ζ": r"Z", "Η": r"H", "Θ": r"$\Theta$",
+        "Ι": r"I", "Κ": r"K", "Λ": r"$\Lambda$", "Μ": r"M",
+        "Ν": r"N", "Ξ": r"$\Xi$", "Ο": r"O", "Π": r"$\Pi$",
+        "Ρ": r"P", "Σ": r"$\Sigma$", "Τ": r"T", "Υ": r"$\Upsilon$",
+        "Φ": r"$\Phi$", "Χ": r"X", "Ψ": r"$\Psi$", "Ω": r"$\Omega$",
     }
+    greek_lower = {
+        "α": r"$\alpha$", "β": r"$\beta$", "γ": r"$\gamma$", "δ": r"$\delta$",
+        "ε": r"$\varepsilon$", "ζ": r"$\zeta$", "η": r"$\eta$", "θ": r"$\theta$",
+        "ι": r"$\iota$", "κ": r"$\kappa$", "λ": r"$\lambda$", "μ": r"$\mu$",
+        "ν": r"$\nu$", "ξ": r"$\xi$", "ο": r"o", "π": r"$\pi$",
+        "ρ": r"$\rho$", "σ": r"$\sigma$", "τ": r"$\tau$", "υ": r"$\upsilon$",
+        "φ": r"$\varphi$", "χ": r"$\chi$", "ψ": r"$\psi$", "ω": r"$\omega$",
+        "ϕ": r"$\phi$", "ϵ": r"$\epsilon$", "ϑ": r"$\vartheta$", "ϱ": r"$\varrho$",
+    }
+    
+    # === MATH OPERATORS & SYMBOLS ===
+    math_symbols = {
+        # Basic operators
+        "−": "-", "–": "-", "—": "-",
+        "×": r"$\times$", "÷": r"$\div$", "±": r"$\pm$", "∓": r"$\mp$",
+        "·": r"$\cdot$", "∗": r"$\ast$",
+        # Relations
+        "≤": r"$\leq$", "≥": r"$\geq$", "≠": r"$\neq$", "≈": r"$\approx$",
+        "≡": r"$\equiv$", "∝": r"$\propto$", "≪": r"$\ll$", "≫": r"$\gg$",
+        "∼": r"$\sim$", "≃": r"$\simeq$",
+        # Arrows
+        "→": r"$\rightarrow$", "←": r"$\leftarrow$", "↔": r"$\leftrightarrow$",
+        "⇒": r"$\Rightarrow$", "⇐": r"$\Leftarrow$", "⇔": r"$\Leftrightarrow$",
+        "↑": r"$\uparrow$", "↓": r"$\downarrow$",
+        # Calculus & Analysis
+        "∂": r"$\partial$", "∇": r"$\nabla$", "∆": r"$\Delta$",
+        "∫": r"$\int$", "∮": r"$\oint$", "∑": r"$\sum$", "∏": r"$\prod$",
+        "√": r"$\sqrt{}$", "∞": r"$\infty$", "∅": r"$\emptyset$",
+        # Set theory
+        "∈": r"$\in$", "∉": r"$\notin$", "⊂": r"$\subset$", "⊃": r"$\supset$",
+        "⊆": r"$\subseteq$", "⊇": r"$\supseteq$", "∪": r"$\cup$", "∩": r"$\cap$",
+        "∧": r"$\wedge$", "∨": r"$\vee$", "¬": r"$\neg$",
+        # Special symbols
+        "ℏ": r"$\hbar$", "ħ": r"$\hbar$",  # h-bar (Planck constant)
+        "ℓ": r"$\ell$",  # script l
+        "℘": r"$\wp$",  # Weierstrass p
+        "ℜ": r"$\Re$", "ℑ": r"$\Im$",  # Real/Imaginary
+        "⊕": r"$\oplus$", "⊗": r"$\otimes$", "⊥": r"$\perp$", "∥": r"$\parallel$",
+        "†": r"$\dagger$", "‡": r"$\ddagger$",
+        "°": r"$^\circ$",  # degree
+        "′": r"$'$", "″": r"$''$",  # prime
+        "…": "...",
+    }
+    
+    # === SUBSCRIPTS ===
+    subscripts = {
+        "₀": r"$_0$", "₁": r"$_1$", "₂": r"$_2$", "₃": r"$_3$", "₄": r"$_4$",
+        "₅": r"$_5$", "₆": r"$_6$", "₇": r"$_7$", "₈": r"$_8$", "₉": r"$_9$",
+        "₊": r"$_+$", "₋": r"$_-$", "₌": r"$_=$",
+        "ₐ": r"$_a$", "ₑ": r"$_e$", "ₒ": r"$_o$", "ₓ": r"$_x$",
+        "ₕ": r"$_h$", "ₖ": r"$_k$", "ₗ": r"$_l$", "ₘ": r"$_m$",
+        "ₙ": r"$_n$", "ₚ": r"$_p$", "ₛ": r"$_s$", "ₜ": r"$_t$",
+    }
+    
+    # === SUPERSCRIPTS ===
+    superscripts = {
+        "⁰": r"$^0$", "¹": r"$^1$", "²": r"$^2$", "³": r"$^3$", "⁴": r"$^4$",
+        "⁵": r"$^5$", "⁶": r"$^6$", "⁷": r"$^7$", "⁸": r"$^8$", "⁹": r"$^9$",
+        "⁺": r"$^+$", "⁻": r"$^-$", "⁼": r"$^=$",
+        "ⁿ": r"$^n$", "ⁱ": r"$^i$",
+    }
+    
+    # === SPACES ===
+    spaces = {
+        "\u202f": " ", "\xa0": " ", "\u2009": " ", "\u2003": " ",
+        "\u2002": " ", "\u2004": " ", "\u2005": " ", "\u2006": " ",
+    }
+    
+    # Apply all replacements
+    all_replacements = {}
+    all_replacements.update(greek_upper)
+    all_replacements.update(greek_lower)
+    all_replacements.update(math_symbols)
+    all_replacements.update(subscripts)
+    all_replacements.update(superscripts)
+    all_replacements.update(spaces)
 
-    for src, dst in replacements.items():
+    for src, dst in all_replacements.items():
         text = text.replace(src, dst)
 
     return text

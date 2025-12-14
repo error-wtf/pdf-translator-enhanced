@@ -3,18 +3,15 @@ Unified PDF Translator - Best Quality Pipeline
 
 Combines all methods intelligently:
 1. Marker for formula extraction (best for math)
-2. Nougat as fallback (better for complex formulas)
-3. PyMuPDF for layout/image extraction (best for structure)
-4. Page-by-page processing (best for large docs)
-5. Smart model loading/unloading for VRAM efficiency
-6. Glossary for consistent terminology
-7. Context window for translation consistency
+2. PyMuPDF for layout/image extraction (best for structure)
+3. Page-by-page processing (best for large docs)
+4. Smart model loading/unloading for VRAM efficiency
 
 Orchestration:
 - Step 1: Split PDF into pages
-- Step 2: For each page, extract with Marker/Nougat (formulas) + PyMuPDF (images/layout)
+- Step 2: For each page, extract with Marker (formulas) + PyMuPDF (images/layout)
 - Step 3: Merge extractions intelligently
-- Step 4: Translate with LLM (Ollama/OpenAI) using context
+- Step 4: Translate with LLM (Ollama/OpenAI)
 - Step 5: Reconstruct PDF with original layout + translated text + images
 - Step 6: Merge all pages
 
@@ -28,7 +25,6 @@ import re
 import subprocess
 import shutil
 import time
-import os
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 import fitz  # PyMuPDF
@@ -38,42 +34,6 @@ from table_detector import detect_tables_in_page, DetectedTable
 
 logger = logging.getLogger("pdf_translator.unified")
 
-
-# =============================================================================
-# CONFIGURATION - QUALITY SETTINGS
-# =============================================================================
-
-# Minimum translation ratio (translated length / original length)
-# If below this, something went wrong
-MIN_TRANSLATION_RATIO = 0.5
-
-# Maximum translation ratio (for detecting garbage output)
-MAX_TRANSLATION_RATIO = 3.0
-
-# Maximum tokens per chunk (to avoid truncation)
-MAX_CHUNK_TOKENS = 2000
-
-# Approximate chars per token
-CHARS_PER_TOKEN = 4
-
-
-# =============================================================================
-# TRANSLATION CONTEXT INTEGRATION
-# =============================================================================
-
-def get_translation_context(target_language: str):
-    """Get or create translation context for consistent terminology."""
-    try:
-        from ollama_backend import TranslationContext
-        return TranslationContext(target_language)
-    except ImportError:
-        logger.warning("TranslationContext not available")
-        return None
-
-
-# =============================================================================
-# MODEL MANAGER
-# =============================================================================
 
 class ModelManager:
     """Manages model loading/unloading for VRAM efficiency."""
@@ -136,10 +96,6 @@ class ModelManager:
 model_manager = ModelManager()
 
 
-# =============================================================================
-# PDF PROCESSING FUNCTIONS
-# =============================================================================
-
 def split_pdf_into_pages(pdf_path: str, output_dir: Path) -> List[Path]:
     """Split PDF into individual pages."""
     doc = fitz.open(pdf_path)
@@ -159,7 +115,7 @@ def split_pdf_into_pages(pdf_path: str, output_dir: Path) -> List[Path]:
     return page_paths
 
 
-def extract_with_marker(pdf_path: str, output_dir: Path, timeout: int = 120) -> Optional[str]:
+def extract_with_marker(pdf_path: str, output_dir: Path) -> Optional[str]:
     """Extract text/formulas with Marker (best for math)."""
     try:
         import sys
@@ -172,7 +128,7 @@ def extract_with_marker(pdf_path: str, output_dir: Path, timeout: int = 120) -> 
             [python_exe, str(worker_script), pdf_path, str(output_dir)],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=120,
             cwd=str(Path(__file__).parent)
         )
         
@@ -182,65 +138,9 @@ def extract_with_marker(pdf_path: str, output_dir: Path, timeout: int = 120) -> 
                 if result_json.get('success'):
                     return result_json.get('output_path')
         return None
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Marker timed out after {timeout}s")
-        return None
     except Exception as e:
         logger.warning(f"Marker extraction failed: {e}")
         return None
-
-
-def extract_with_nougat_fallback(pdf_path: str, output_dir: Path) -> Optional[str]:
-    """Try Nougat extraction as fallback for Marker."""
-    try:
-        from nougat_extractor import is_nougat_available, extract_with_nougat
-        
-        if not is_nougat_available():
-            logger.info("Nougat not available as fallback")
-            return None
-        
-        logger.info("Using Nougat as fallback extractor")
-        markdown = extract_with_nougat(str(pdf_path), str(output_dir))
-        
-        if markdown and len(markdown) > 50:
-            # Save to file
-            output_file = output_dir / f"{Path(pdf_path).stem}_nougat.md"
-            output_file.write_text(markdown, encoding="utf-8")
-            return str(output_file)
-        
-        return None
-    except ImportError:
-        logger.debug("nougat_extractor not available")
-        return None
-    except Exception as e:
-        logger.warning(f"Nougat extraction failed: {e}")
-        return None
-
-
-def smart_extract_text(pdf_path: str, output_dir: Path, timeout: int = 120) -> Tuple[Optional[str], str]:
-    """
-    Smart extraction: tries Marker first, falls back to Nougat.
-    
-    Returns (markdown_content, method_used)
-    """
-    # Try Marker first
-    marker_result = extract_with_marker(pdf_path, output_dir, timeout=timeout)
-    
-    if marker_result and Path(marker_result).exists():
-        content = Path(marker_result).read_text(encoding='utf-8')
-        if len(content) > 50:
-            return content, "marker"
-    
-    # Marker failed or produced empty output - try Nougat
-    nougat_result = extract_with_nougat_fallback(pdf_path, output_dir)
-    
-    if nougat_result and Path(nougat_result).exists():
-        content = Path(nougat_result).read_text(encoding='utf-8')
-        if len(content) > 50:
-            return content, "nougat"
-    
-    # Both failed - return None
-    return None, "none"
 
 
 def extract_with_pymupdf(pdf_path: Path) -> Dict:
@@ -252,8 +152,7 @@ def extract_with_pymupdf(pdf_path: Path) -> Dict:
         "page_width": page.rect.width,
         "page_height": page.rect.height,
         "images": [],
-        "text_blocks": [],
-        "full_text": ""
+        "text_blocks": []
     }
     
     # Extract images
@@ -275,384 +174,320 @@ def extract_with_pymupdf(pdf_path: Path) -> Dict:
         except Exception as e:
             logger.warning(f"Could not extract image {img_idx}: {e}")
     
-    # Extract text blocks with position
+    # Extract text blocks with positions
     blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-    
-    all_text_parts = []
-    
     for block in blocks:
-        if block.get("type") == 0:  # Text block
-            block_text = ""
-            for line in block.get("lines", []):
-                line_text = ""
-                for span in line.get("spans", []):
-                    line_text += span.get("text", "")
-                block_text += line_text + "\n"
+        if block["type"] == 0:  # Text block
+            text = ""
+            font_size = 12
+            is_bold = False
             
-            if block_text.strip():
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    # NORMALIZE each span immediately on extraction
+                    span_text = normalize_text(span.get("text", ""))
+                    text += span_text
+                    font_size = span.get("size", 12)
+                    font_name = span.get("font", "").lower()
+                    is_bold = "bold" in font_name
+                text += "\n"
+            
+            # Normalize the complete block text
+            normalized_text = normalize_text(text.strip())
+            
+            if normalized_text:
                 result["text_blocks"].append({
-                    "text": block_text.strip(),
-                    "x": block.get("bbox", [0])[0],
-                    "y": block.get("bbox", [0, 0])[1],
-                    "width": block.get("bbox", [0, 0, 0])[2] - block.get("bbox", [0])[0],
-                    "height": block.get("bbox", [0, 0, 0, 0])[3] - block.get("bbox", [0, 0])[1],
+                    "text": normalized_text,
+                    "x": block["bbox"][0],
+                    "y": block["bbox"][1],
+                    "width": block["bbox"][2] - block["bbox"][0],
+                    "height": block["bbox"][3] - block["bbox"][1],
+                    "font_size": font_size,
+                    "is_bold": is_bold
                 })
-                all_text_parts.append(block_text.strip())
     
-    # Store complete text from PyMuPDF
-    result["full_text"] = "\n\n".join(all_text_parts)
+    # Sort blocks by reading order (top-to-bottom, left-to-right)
+    result["text_blocks"] = sort_blocks_reading_order(result["text_blocks"])
     
     doc.close()
     return result
 
 
+def sort_blocks_reading_order(blocks: List[Dict]) -> List[Dict]:
+    """
+    Sort text blocks in reading order.
+    
+    Strategy:
+    - Primary sort by y position (top to bottom)
+    - Secondary sort by x position (left to right)
+    - Group blocks that are on the same "line" (similar y)
+    """
+    if not blocks:
+        return blocks
+    
+    # Calculate average line height for grouping
+    avg_height = sum(b["height"] for b in blocks) / len(blocks) if blocks else 20
+    y_threshold = avg_height * 0.5  # Blocks within this y-distance are on same "line"
+    
+    # Sort by y first, then x
+    sorted_blocks = sorted(blocks, key=lambda b: (b["y"], b["x"]))
+    
+    # Group blocks by approximate y position (same line)
+    lines = []
+    current_line = []
+    current_y = None
+    
+    for block in sorted_blocks:
+        if current_y is None:
+            current_y = block["y"]
+            current_line = [block]
+        elif abs(block["y"] - current_y) <= y_threshold:
+            current_line.append(block)
+        else:
+            # Sort current line by x and add to lines
+            current_line.sort(key=lambda b: b["x"])
+            lines.append(current_line)
+            current_line = [block]
+            current_y = block["y"]
+    
+    # Don't forget the last line
+    if current_line:
+        current_line.sort(key=lambda b: b["x"])
+        lines.append(current_line)
+    
+    # Flatten back to list
+    result = []
+    for line in lines:
+        result.extend(line)
+    
+    return result
+
+
 def merge_extractions(marker_text: Optional[str], pymupdf_data: Dict) -> Dict:
     """
-    IMPROVED: Merge Marker (formulas) + PyMuPDF (layout) extractions.
+    Intelligently merge Marker (formulas) with PyMuPDF (layout).
     
-    Uses BOTH sources to ensure no text is lost:
-    - Marker for formula-heavy sections
-    - PyMuPDF for complete text coverage
+    Strategy:
+    - Use PyMuPDF for layout/positions
+    - Use Marker text for formula-heavy blocks (detected by $ or \)
+    - Preserve images from PyMuPDF
     """
-    merged = {
-        "page_width": pymupdf_data.get("page_width", 612),
-        "page_height": pymupdf_data.get("page_height", 792),
-        "images": pymupdf_data.get("images", []),
-        "text_blocks": [],
-        "full_text": "",
-        "source": "none"
-    }
+    result = pymupdf_data.copy()
     
-    pymupdf_text = pymupdf_data.get("full_text", "")
-    pymupdf_blocks = pymupdf_data.get("text_blocks", [])
+    if not marker_text:
+        return result
     
-    # CRITICAL FIX: Compare both sources and use the more complete one
-    if marker_text and pymupdf_text:
-        marker_len = len(marker_text.strip())
-        pymupdf_len = len(pymupdf_text.strip())
+    # Check if Marker found formulas
+    has_formulas = '$' in marker_text or '\\' in marker_text
+    
+    if has_formulas:
+        # Split Marker text into paragraphs
+        marker_paragraphs = [p.strip() for p in marker_text.split('\n\n') if p.strip()]
         
-        # Use whichever has more content, but also check for formula indicators
-        has_formulas = bool(re.search(r'\$.*?\$|\\begin\{|\\frac|\\sum|\\int', marker_text))
-        
-        if has_formulas and marker_len >= pymupdf_len * 0.7:
-            # Marker has formulas and reasonable coverage - use it
-            merged["full_text"] = marker_text
-            merged["source"] = "marker"
-            logger.info(f"Using Marker: {marker_len} chars (has formulas)")
-        elif pymupdf_len > marker_len * 1.2:
-            # PyMuPDF has significantly more content - use it
-            merged["full_text"] = pymupdf_text
-            merged["source"] = "pymupdf"
-            merged["text_blocks"] = pymupdf_blocks
-            logger.info(f"Using PyMuPDF: {pymupdf_len} chars (more complete)")
-        else:
-            # Similar length - prefer Marker for formula preservation
-            merged["full_text"] = marker_text
-            merged["source"] = "marker"
-            logger.info(f"Using Marker: {marker_len} chars (similar, prefer formulas)")
+        # Try to match Marker paragraphs to PyMuPDF blocks by similarity
+        for i, block in enumerate(result["text_blocks"]):
+            block_text = block["text"]
             
-    elif marker_text:
-        merged["full_text"] = marker_text
-        merged["source"] = "marker"
-        logger.info(f"Using Marker only: {len(marker_text)} chars")
-        
-    elif pymupdf_text:
-        merged["full_text"] = pymupdf_text
-        merged["source"] = "pymupdf"
-        merged["text_blocks"] = pymupdf_blocks
-        logger.info(f"Using PyMuPDF only: {len(pymupdf_text)} chars")
-    
-    else:
-        logger.warning("No text extracted from either source!")
-        merged["source"] = "none"
-    
-    return merged
-
-
-# =============================================================================
-# TRANSLATION FUNCTIONS - IMPROVED
-# =============================================================================
-
-def estimate_tokens(text: str) -> int:
-    """Estimate token count for text."""
-    return len(text) // CHARS_PER_TOKEN
-
-
-def chunk_text(text: str, max_tokens: int = MAX_CHUNK_TOKENS) -> List[str]:
-    """
-    Split text into chunks that won't exceed token limit.
-    Splits on paragraph boundaries to preserve context.
-    """
-    if estimate_tokens(text) <= max_tokens:
-        return [text]
-    
-    chunks = []
-    paragraphs = text.split('\n\n')
-    current_chunk = ""
-    
-    for para in paragraphs:
-        para_tokens = estimate_tokens(para)
-        current_tokens = estimate_tokens(current_chunk)
-        
-        if current_tokens + para_tokens > max_tokens:
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            
-            # If single paragraph is too long, split by sentences
-            if para_tokens > max_tokens:
-                sentences = re.split(r'(?<=[.!?])\s+', para)
-                for sent in sentences:
-                    if estimate_tokens(current_chunk + sent) > max_tokens:
-                        if current_chunk:
-                            chunks.append(current_chunk.strip())
-                        current_chunk = sent + " "
-                    else:
-                        current_chunk += sent + " "
-            else:
-                current_chunk = para + "\n\n"
-        else:
-            current_chunk += para + "\n\n"
-    
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-    
-    logger.info(f"Split text into {len(chunks)} chunks")
-    return chunks
-
-
-def validate_translation(original: str, translated: str) -> Tuple[bool, str]:
-    """
-    Validate translation quality.
-    Returns (is_valid, issue_description)
-    """
-    if not translated or not translated.strip():
-        return False, "Empty translation"
-    
-    orig_len = len(original.strip())
-    trans_len = len(translated.strip())
-    
-    if orig_len == 0:
-        return True, "OK (empty original)"
-    
-    ratio = trans_len / orig_len
-    
-    if ratio < MIN_TRANSLATION_RATIO:
-        return False, f"Translation too short ({ratio:.1%} of original)"
-    
-    if ratio > MAX_TRANSLATION_RATIO:
-        return False, f"Translation too long ({ratio:.1%} of original) - possible garbage"
-    
-    # Check for common LLM failure patterns
-    failure_patterns = [
-        r'^(I\'m sorry|I cannot|I apologize|As an AI)',
-        r'^(Here is|Here\'s|Below is)',
-        r'^(Translation|Translated|Übersetzung|Traduzione):',
-        r'^\s*\[.*?\]\s*$',  # Just brackets
-    ]
-    
-    for pattern in failure_patterns:
-        if re.match(pattern, translated.strip(), re.IGNORECASE):
-            return False, f"LLM meta-response detected"
-    
-    return True, "OK"
-
-
-def translate_text_block(
-    text: str,
-    target_language: str,
-    model: str,
-    use_openai: bool = False,
-    openai_api_key: str = None,
-    translation_context = None,
-    max_retries: int = 3,
-) -> str:
-    """
-    IMPROVED: Translate text block with validation and retry.
-    
-    Features:
-    - Chunks long text to avoid truncation
-    - Validates output length
-    - Retries on failure
-    - Uses formula isolation
-    """
-    if not text or not text.strip():
-        return text
-    
-    # Protect formulas before translation
-    try:
-        from formula_isolator import extract_and_protect
-        protected_text, restore_formulas = extract_and_protect(text)
-    except ImportError:
-        protected_text = text
-        restore_formulas = lambda x: x
-    
-    # Chunk if too long
-    chunks = chunk_text(protected_text)
-    translated_chunks = []
-    
-    for chunk_idx, chunk in enumerate(chunks):
-        chunk_translated = None
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                if use_openai and openai_api_key:
-                    # OpenAI translation
-                    chunk_translated = translate_with_openai(
-                        chunk, target_language, openai_api_key
-                    )
-                else:
-                    # Ollama translation
-                    chunk_translated = translate_with_ollama_direct(
-                        chunk, model, target_language, translation_context
-                    )
+            # If block looks like it might have formulas, try to find better version from Marker
+            if any(c in block_text for c in ['=', '+', '-', '*', '/', '^', '_']):
+                # Find most similar Marker paragraph
+                best_match = None
+                best_score = 0
                 
-                # Validate
-                is_valid, issue = validate_translation(chunk, chunk_translated)
+                for mp in marker_paragraphs:
+                    # Simple word overlap score
+                    block_words = set(block_text.lower().split())
+                    marker_words = set(mp.lower().split())
+                    if block_words and marker_words:
+                        overlap = len(block_words & marker_words)
+                        score = overlap / max(len(block_words), len(marker_words))
+                        if score > best_score and score > 0.3:
+                            best_score = score
+                            best_match = mp
                 
-                if is_valid:
-                    logger.debug(f"Chunk {chunk_idx+1}/{len(chunks)} translated OK")
-                    break
-                else:
-                    last_error = issue
-                    logger.warning(f"Translation validation failed (attempt {attempt+1}): {issue}")
-                    chunk_translated = None
-                    
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"Translation error (attempt {attempt+1}): {e}")
-                time.sleep(1)  # Brief pause before retry
-        
-        # If all retries failed, use original
-        if chunk_translated is None:
-            logger.error(f"Chunk {chunk_idx+1} translation failed after {max_retries} attempts: {last_error}")
-            logger.error(f"Using original text for this chunk")
-            chunk_translated = chunk  # Fallback to original
-        
-        translated_chunks.append(chunk_translated)
+                if best_match and ('$' in best_match or '\\' in best_match):
+                    # Use Marker version for this block (has formulas)
+                    result["text_blocks"][i]["text"] = best_match
+                    result["text_blocks"][i]["from_marker"] = True
     
-    # Combine chunks
-    full_translation = "\n\n".join(translated_chunks)
+    return result
+
+
+def protect_formulas(text: str) -> tuple[str, dict]:
+    """
+    Protect mathematical formulas and scientific notation from translation.
     
-    # Restore formulas
-    final_text = restore_formulas(full_translation)
+    This is CRITICAL for scientific PDFs. The LLM must not touch:
+    - LaTeX math expressions
+    - Greek letters
+    - Mathematical operators
+    - Scientific notation
+    - Variable names with subscripts
+    - Unit expressions
     
-    return final_text
-
-
-def translate_with_ollama_direct(
-    text: str,
-    model: str,
-    target_language: str,
-    context = None
-) -> str:
-    """Direct Ollama translation with improved prompting."""
-    import requests
+    Returns (protected_text, placeholders_dict)
+    """
+    protected = {}
+    counter = [0]
     
-    # Build prompt
-    system_prompt = f"""You are a scientific document translator. Translate the text to {target_language}.
-
-CRITICAL RULES:
-1. Output ONLY the translation - no explanations, no meta-comments
-2. Translate ALL text - do not summarize or shorten
-3. Keep all LaTeX/math notation unchanged: $...$ and $$...$$
-4. Keep all ⟦...⟧ placeholders exactly as they are
-5. Keep author names, citations, references unchanged
-6. Preserve paragraph structure
-
-The translation must be COMPLETE - do not skip any content."""
-
-    user_prompt = f"Translate to {target_language}:\n\n{text}"
+    def protect(match):
+        key = f"[[MATH_{counter[0]}]]"
+        protected[key] = match.group(0)
+        counter[0] += 1
+        return key
     
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/chat",
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,
-                    "num_predict": 8192,  # Generous output limit
-                    "top_p": 0.9,
-                },
-            },
-            timeout=300,
-        )
+    # Patterns to protect (order matters - more specific first!)
+    patterns = [
+        # === LATEX ENVIRONMENTS (must be first) ===
+        r'\\begin\{equation\*?\}[\s\S]*?\\end\{equation\*?\}',
+        r'\\begin\{align\*?\}[\s\S]*?\\end\{align\*?\}',
+        r'\\begin\{eqnarray\*?\}[\s\S]*?\\end\{eqnarray\*?\}',
+        r'\\begin\{array\}[\s\S]*?\\end\{array\}',
+        r'\\begin\{matrix\}[\s\S]*?\\end\{matrix\}',
+        r'\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\}',
         
-        if response.status_code == 200:
-            data = response.json()
-            result = data.get("message", {}).get("content", "")
-            
-            # Clean any meta-text
-            result = clean_translation_output(result)
-            
-            return result
-        else:
-            logger.error(f"Ollama API error: HTTP {response.status_code}")
-            raise Exception(f"Ollama API error: {response.status_code}")
-            
-    except requests.exceptions.Timeout:
-        logger.error("Ollama translation timed out")
-        raise
-    except Exception as e:
-        logger.error(f"Ollama translation error: {e}")
-        raise
-
-
-def translate_with_openai(text: str, target_language: str, api_key: str) -> str:
-    """OpenAI translation."""
-    try:
-        import openai
-        client = openai.OpenAI(api_key=api_key)
+        # === LATEX DISPLAY MATH ===
+        r'\$\$[\s\S]*?\$\$',
+        r'\\\[[\s\S]*?\\\]',
         
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"Translate the following text to {target_language}. "
-                               f"Output ONLY the translation. Keep all formulas and placeholders unchanged."
-                },
-                {"role": "user", "content": text}
-            ],
-            temperature=0.1,
-            max_tokens=4096,
-        )
+        # === LATEX INLINE MATH ===
+        r'\$(?:[^$\\]|\\.)+\$',
+        r'\\\((?:[^\\]|\\.)*?\\\)',
         
-        return response.choices[0].message.content
+        # === LATEX COMMANDS WITH BRACES ===
+        r'\\(?:frac|sqrt|vec|hat|bar|dot|ddot|tilde|mathbf|mathrm|mathcal|mathbb|text)\{[^}]*\}(?:\{[^}]*\})?',
+        r'\\[a-zA-Z]+\{[^}]*\}',
+        r'\\[a-zA-Z]+',
         
-    except Exception as e:
-        logger.error(f"OpenAI translation error: {e}")
-        raise
-
-
-def clean_translation_output(text: str) -> str:
-    """Remove LLM meta-text from translation output."""
-    # Patterns that indicate echoed instructions or meta-comments
-    bad_patterns = [
-        r'^(Here is|Here\'s|Below is|The following is).*?:\s*\n',
-        r'^(Translation|Translated|Übersetzung|Traduzione|Traduction):?\s*\n',
-        r'^\s*---+\s*\n',
-        r'\n\s*---+\s*$',
+        # === EQUATIONS (inline) ===
+        # Schrodinger equation pattern: iħ∂Ψ/∂t = ĤΨ
+        r'[iℏħ]?\s*[∂∇]\s*[ΨΦψφ]\s*/\s*[∂∇]\s*[trxyz]',
+        r'[ĤĤH]\s*[ΨΦψφ]\s*=\s*[EeΕε]\s*[ΨΦψφ]',
+        
+        # === SCIENTIFIC NOTATION ===
+        r'\d+\.?\d*\s*[×x·]\s*10\s*\^?\s*[−\-+]?\s*\{?\s*[−\-+]?\d+\s*\}?',
+        r'\d+\.?\d*\s*[eE]\s*[−\-+]?\s*\d+',
+        r'10\s*\^?\s*[−\-+]?\s*\{?\s*[−\-+]?\d+\s*\}?',
+        
+        # === NUMBERS WITH UNITS ===
+        r'\d+\.?\d*\s*(?:Hz|kHz|MHz|GHz|THz|PHz|nm|μm|µm|mm|cm|dm|m|km|Å|nm|pm|fm|ns|μs|µs|ms|s|min|h|eV|keV|MeV|GeV|TeV|K|°C|°F|Pa|kPa|MPa|GPa|bar|atm|J|kJ|MJ|cal|kcal|W|kW|MW|GW|V|mV|kV|MV|A|mA|μA|Ω|kΩ|MΩ|F|μF|nF|pF|H|mH|μH|T|mT|G|mol|mmol|μmol|M|mM|μM|nM|L|mL|μL|g|mg|μg|kg|Da|kDa|rpm|dB|bit|byte|KB|MB|GB|TB)\b',
+        
+        # === MATH OPERATORS & SYMBOLS ===
+        r'[ℏħℓ℘ℜℑ∇∂∫∮∯∰∑∏∐√∛∜∞∅∃∀∈∉⊂⊃⊆⊇∪∩∧∨¬⊕⊗⊥∥†‡±∓×÷·∗≤≥≠≈≡≢∝≪≫∼≃≅≇∝∞°′″‴⁗]',
+        
+        # === GREEK LETTERS (single or sequences) ===
+        r'[αβγδεζηθικλμνξοπρσςτυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩϕϵϑϱϖ]+',
+        
+        # === MODIFIED LETTERS (hat, bar, dot, etc.) ===
+        r'[ĤĥĜĝŴŵŜŝÂâÊêÎîÔôÛû]',
+        
+        # === SUBSCRIPTS & SUPERSCRIPTS ===
+        r'[₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜ]+',
+        r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ]+',
+        r'_\{[^}]+\}',
+        r'\^\{[^}]+\}',
+        r'_[A-Za-z0-9]',
+        r'\^[A-Za-z0-9]',
+        
+        # === VARIABLE PATTERNS ===
+        r'\b[A-Za-z]_\{?[A-Za-z0-9,]+\}?\b',  # T_1, r_s, E_{kin}
+        r'\b[A-Za-z]\^?\{?[A-Za-z0-9,]+\}?\b',  # x^2, v^{max}
+        
+        # === ARROWS ===
+        r'[→←↔⇒⇐⇔↑↓↕⟶⟵⟷⟹⟸⟺]',
+        
+        # === REFERENCE PATTERNS ===
+        r'\b(?:Eq\.?|Eqs\.?|Equation|Fig\.?|Figure|Tab\.?|Table|Ref\.?|Sec\.?|Section)\s*[\(\[]?\s*\d+(?:\.\d+)*\s*[\)\]]?',
+        r'\[\d+(?:,\s*\d+)*\]',  # Citations [1], [1,2,3]
     ]
     
     result = text
-    for pattern in bad_patterns:
-        result = re.sub(pattern, '', result, flags=re.IGNORECASE | re.MULTILINE)
+    for pattern in patterns:
+        try:
+            result = re.sub(pattern, protect, result)
+        except re.error as e:
+            logger.warning(f"Regex error in pattern: {e}")
     
-    return result.strip()
+    logger.debug(f"Protected {len(protected)} math expressions")
+    return result, protected
 
 
-# =============================================================================
-# PAGE CREATION
-# =============================================================================
+def restore_formulas(text: str, protected: dict) -> str:
+    """Restore protected formulas after translation."""
+    result = text
+    for key, value in protected.items():
+        result = result.replace(key, value)
+    return result
+
+
+def cleanup_llm_output(text: str) -> str:
+    """
+    Clean up HTML/Markdown artifacts from LLM output.
+    
+    LLMs often produce HTML tags like <sup>, <sub>, <b>, <i> etc.
+    that should be converted to LaTeX or removed.
+    """
+    if not text:
+        return text
+    
+    # HTML superscript to LaTeX
+    text = re.sub(r'<sup>([^<]+)</sup>', r'$^{\1}$', text)
+    text = re.sub(r'<SUP>([^<]+)</SUP>', r'$^{\1}$', text, flags=re.IGNORECASE)
+    
+    # HTML subscript to LaTeX
+    text = re.sub(r'<sub>([^<]+)</sub>', r'$_{\1}$', text)
+    text = re.sub(r'<SUB>([^<]+)</SUB>', r'$_{\1}$', text, flags=re.IGNORECASE)
+    
+    # HTML bold to LaTeX
+    text = re.sub(r'<b>([^<]+)</b>', r'\\textbf{\1}', text, flags=re.IGNORECASE)
+    text = re.sub(r'<strong>([^<]+)</strong>', r'\\textbf{\1}', text, flags=re.IGNORECASE)
+    
+    # HTML italic to LaTeX
+    text = re.sub(r'<i>([^<]+)</i>', r'\\textit{\1}', text, flags=re.IGNORECASE)
+    text = re.sub(r'<em>([^<]+)</em>', r'\\textit{\1}', text, flags=re.IGNORECASE)
+    
+    # Remove any remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Fix double dollar signs from LLM ($$...$$ should be display math)
+    text = re.sub(r'\$\$([^$]+)\$\$', r'\\[\1\\]', text)
+    
+    # Fix escaped LaTeX that LLM might produce
+    text = text.replace('\\\\', '\\')  # Double backslash to single
+    
+    # Remove markdown bold/italic if present
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\\textbf{\1}', text)
+    text = re.sub(r'\*([^*]+)\*', r'\\textit{\1}', text)
+    
+    # Clean up excessive whitespace
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r' {2,}', ' ', text)
+    
+    return text.strip()
+
+
+def translate_text(text: str, model: str, target_language: str,
+                   use_openai: bool = False, openai_api_key: str = None) -> str:
+    """Translate text using Ollama or OpenAI, protecting formulas."""
+    from pdf_marker_translator import translate_text_chunk
+    
+    # Protect formulas before translation
+    protected_text, formulas = protect_formulas(text)
+    
+    # Translate
+    translated = translate_text_chunk(protected_text, model, target_language, use_openai, openai_api_key)
+    
+    # Clean up HTML/Markdown artifacts from LLM
+    translated = cleanup_llm_output(translated)
+    
+    # Restore formulas
+    result = restore_formulas(translated, formulas)
+    
+    return result
+
 
 def create_translated_page(
-    merged_data: Dict,
+    page_data: Dict,
     images_dir: Path,
     page_num: int,
     output_path: Path,
@@ -660,151 +495,199 @@ def create_translated_page(
     model: str,
     use_openai: bool = False,
     openai_api_key: str = None,
-    progress_callback = None,
-    translation_context = None,
+    progress_callback=None
 ) -> bool:
-    """Create a translated PDF page."""
-    try:
-        # Get full text to translate
-        full_text = merged_data.get("full_text", "")
-        
-        if not full_text.strip():
-            logger.warning(f"Page {page_num}: No text to translate")
-            # Create empty page
-            doc = fitz.open()
-            page = doc.new_page(
-                width=merged_data.get("page_width", 612),
-                height=merged_data.get("page_height", 792)
-            )
-            doc.save(str(output_path))
-            doc.close()
-            return True
-        
-        # Log original text length
-        orig_len = len(full_text)
-        logger.info(f"Page {page_num}: Translating {orig_len} chars")
-        
-        if progress_callback:
-            progress_callback(1, 3, "Translating text...")
-        
-        # Translate the full text
-        translated_text = translate_text_block(
-            full_text,
-            target_language,
-            model,
-            use_openai,
-            openai_api_key,
-            translation_context
-        )
-        
-        # Log translated text length
-        trans_len = len(translated_text)
-        ratio = trans_len / orig_len if orig_len > 0 else 0
-        logger.info(f"Page {page_num}: Translated to {trans_len} chars ({ratio:.1%})")
-        
-        if ratio < MIN_TRANSLATION_RATIO:
-            logger.warning(f"Page {page_num}: Translation suspiciously short!")
-        
-        if progress_callback:
-            progress_callback(2, 3, "Creating PDF page...")
-        
-        # Create new PDF page
-        doc = fitz.open()
-        page = doc.new_page(
-            width=merged_data.get("page_width", 612),
-            height=merged_data.get("page_height", 792)
-        )
-        
-        # Add translated text
-        # Use a simple text insertion for now
-        text_rect = fitz.Rect(50, 50, page.rect.width - 50, page.rect.height - 50)
-        
-        # Try to insert with standard font
+    """Create a translated PDF page with original layout."""
+    
+    # Create new PDF
+    new_doc = fitz.open()
+    new_page = new_doc.new_page(
+        width=page_data["page_width"],
+        height=page_data["page_height"]
+    )
+    
+    # Insert images first (background layer)
+    for i, img in enumerate(page_data["images"]):
         try:
-            # Use a font that supports many characters
-            fontname = "helv"  # Helvetica
-            fontsize = 10
+            img_path = images_dir / f"page{page_num:03d}_img{i:02d}.{img['ext']}"
+            with open(img_path, 'wb') as f:
+                f.write(img["data"])
             
-            # Insert text with automatic wrapping
-            rc = page.insert_textbox(
-                text_rect,
-                translated_text,
-                fontname=fontname,
-                fontsize=fontsize,
-                align=fitz.TEXT_ALIGN_LEFT,
+            img_rect = fitz.Rect(
+                img["x"], img["y"],
+                img["x"] + img["width"],
+                img["y"] + img["height"]
             )
-            
-            # If text didn't fit, try smaller font
-            if rc < 0:
-                fontsize = 8
-                page.insert_textbox(
-                    text_rect,
-                    translated_text,
-                    fontname=fontname,
-                    fontsize=fontsize,
-                    align=fitz.TEXT_ALIGN_LEFT,
-                )
-                
+            new_page.insert_image(img_rect, filename=str(img_path))
         except Exception as e:
-            logger.warning(f"Page {page_num}: Text insertion error: {e}")
-            # Fallback: simple text insertion
-            page.insert_text((50, 70), translated_text[:5000], fontsize=9)
-        
-        # Add images
-        for img_idx, img_data in enumerate(merged_data.get("images", [])):
-            try:
-                img_bytes = img_data.get("data")
-                if img_bytes:
-                    img_rect = fitz.Rect(
-                        img_data.get("x", 0),
-                        img_data.get("y", 0),
-                        img_data.get("x", 0) + img_data.get("width", 100),
-                        img_data.get("y", 0) + img_data.get("height", 100)
-                    )
-                    page.insert_image(img_rect, stream=img_bytes)
-            except Exception as e:
-                logger.warning(f"Page {page_num}: Could not insert image {img_idx}: {e}")
+            logger.warning(f"Could not insert image: {e}")
+    
+    # Translate and insert text blocks
+    total_blocks = len(page_data["text_blocks"])
+    inserted_count = 0
+    
+    for i, block in enumerate(page_data["text_blocks"]):
+        if not block["text"].strip():
+            continue
         
         if progress_callback:
-            progress_callback(3, 3, "Saving page...")
+            progress_callback(i + 1, total_blocks, f"Block {i + 1}/{total_blocks}")
         
-        doc.save(str(output_path))
-        doc.close()
-        return True
+        # Translate
+        translated = translate_text(
+            block["text"], model, target_language,
+            use_openai, openai_api_key
+        )
         
-    except Exception as e:
-        logger.exception(f"Failed to create translated page: {e}")
-        return False
+        if not translated or not translated.strip():
+            translated = block["text"]  # Keep original if translation failed
+        
+        # Calculate font size - start with original, but allow shrinking
+        font_size = min(block["font_size"], 10)
+        if font_size < 6:
+            font_size = 8
+        
+        # Create rect with some padding for text overflow
+        x0 = max(10, block["x"])
+        y0 = max(10, block["y"])
+        x1 = min(page_data["page_width"] - 10, block["x"] + block["width"] + 50)
+        y1 = min(page_data["page_height"] - 10, block["y"] + block["height"] + 20)
+        
+        text_rect = fitz.Rect(x0, y0, x1, y1)
+        
+        # Try insert_textbox first with auto-shrink
+        try:
+            rc = new_page.insert_textbox(
+                text_rect,
+                translated,
+                fontsize=font_size,
+                fontname="helv",
+                align=fitz.TEXT_ALIGN_LEFT,
+                expandtabs=True
+            )
+            # rc < 0 means text didn't fit, but some was inserted
+            # rc >= 0 means all text fit
+            inserted_count += 1
+            logger.debug(f"Page {page_num} block {i}: inserted with rc={rc}")
+        except Exception as e:
+            # Fallback: use insert_text line by line
+            logger.warning(f"Page {page_num} block {i}: textbox failed ({e}), using line-by-line")
+            try:
+                lines = translated.split('\n')
+                y_pos = y0 + font_size
+                for line in lines[:20]:  # Limit lines to prevent overflow
+                    if y_pos > y1:
+                        break
+                    new_page.insert_text(
+                        (x0, y_pos),
+                        line[:200],  # Limit line length
+                        fontsize=font_size,
+                        fontname="helv"
+                    )
+                    y_pos += font_size + 2
+                inserted_count += 1
+            except Exception as e2:
+                logger.error(f"Page {page_num} block {i}: all text insertion failed: {e2}")
+    
+    logger.info(f"Page {page_num}: Inserted {inserted_count}/{total_blocks} text blocks")
+    
+    new_doc.save(str(output_path))
+    new_doc.close()
+    return True
 
 
-def merge_pdfs(page_paths: List[Path], output_path: Path) -> bool:
-    """Merge multiple PDF pages into one document."""
-    try:
-        output_doc = fitz.open()
-        
-        for page_path in page_paths:
-            if page_path.exists():
-                page_doc = fitz.open(str(page_path))
-                output_doc.insert_pdf(page_doc)
-                page_doc.close()
-        
-        output_doc.save(str(output_path))
-        output_doc.close()
-        
-        logger.info(f"Merged {len(page_paths)} pages into {output_path}")
-        return True
-    except Exception as e:
-        logger.exception(f"Failed to merge PDFs: {e}")
+def merge_pdfs(pdf_paths: List[Path], output_path: Path) -> bool:
+    """Merge multiple PDFs into one."""
+    if not pdf_paths:
         return False
+    
+    merged_doc = fitz.open()
+    for pdf_path in pdf_paths:
+        if pdf_path.exists():
+            doc = fitz.open(str(pdf_path))
+            merged_doc.insert_pdf(doc)
+            doc.close()
+    
+    merged_doc.save(str(output_path))
+    merged_doc.close()
+    return True
+
+
+def remove_blank_pages(pdf_path: Path) -> int:
+    """
+    Remove blank pages from a PDF.
+    
+    A page is considered blank if it has no text AND no images.
+    Returns the number of pages removed.
+    """
+    import os
+    
+    # First pass: identify blank pages
+    doc = fitz.open(str(pdf_path))
+    pages_to_remove = []
+    
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        
+        # Check for text
+        text = page.get_text().strip()
+        has_text = len(text) > 10  # More than just whitespace/artifacts
+        
+        # Check for images
+        images = page.get_images()
+        has_images = len(images) > 0
+        
+        # Check for drawings/paths
+        drawings = page.get_drawings()
+        has_drawings = len(drawings) > 5  # Some drawings might be just lines
+        
+        if not has_text and not has_images and not has_drawings:
+            pages_to_remove.append(page_num)
+            logger.info(f"Marking blank page {page_num + 1} for removal")
+    
+    doc.close()  # Close before modifying
+    
+    if not pages_to_remove:
+        return 0
+    
+    # Second pass: create new PDF without blank pages
+    doc = fitz.open(str(pdf_path))
+    new_doc = fitz.open()  # Create empty document
+    
+    for page_num in range(len(doc)):
+        if page_num not in pages_to_remove:
+            new_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
+    
+    doc.close()
+    
+    # Save new document to temp file
+    temp_path = pdf_path.parent / f"{pdf_path.stem}_cleaned{pdf_path.suffix}"
+    new_doc.save(str(temp_path))
+    new_doc.close()
+    
+    # Replace original with cleaned version
+    os.replace(str(temp_path), str(pdf_path))
+    
+    removed_count = len(pages_to_remove)
+    logger.info(f"Removed {removed_count} blank pages")
+    
+    return removed_count
 
 
 def post_build_sanity_check(pdf_path: Path, source_page_count: int) -> Dict:
-    """Post-build sanity check for the generated PDF."""
+    """
+    Post-build sanity check for the generated PDF.
+    
+    Returns a report dict with:
+    - page_count: final page count
+    - blank_pages_removed: number of blank pages removed
+    - garbage_chars_found: number of garbage chars in text
+    - warnings: list of warning messages
+    """
     report = {
         "page_count": 0,
         "blank_pages_removed": 0,
         "garbage_chars_found": 0,
-        "total_chars": 0,
         "warnings": []
     }
     
@@ -812,33 +695,32 @@ def post_build_sanity_check(pdf_path: Path, source_page_count: int) -> Dict:
         report["warnings"].append("Output PDF does not exist")
         return report
     
+    # DISABLED: Blank page removal was incorrectly removing pages with content
+    # The issue is that text insertion via insert_textbox doesn't always work
+    # report["blank_pages_removed"] = remove_blank_pages(pdf_path)
+    report["blank_pages_removed"] = 0
+    
+    # Check final page count
     doc = fitz.open(str(pdf_path))
     report["page_count"] = len(doc)
     
-    # Check for garbage characters and count total text
+    # Check for garbage characters in text
     full_text = ""
     for page in doc:
         full_text += page.get_text()
     
-    report["total_chars"] = len(full_text)
     report["garbage_chars_found"] = count_garbage_chars(full_text)
     
     if report["garbage_chars_found"] > 0:
-        report["warnings"].append(f"Found {report['garbage_chars_found']} garbage characters")
+        report["warnings"].append(f"Found {report['garbage_chars_found']} garbage characters in output")
     
+    # Check page count explosion
     if report["page_count"] > source_page_count + 2:
-        report["warnings"].append(f"Page count increased: {source_page_count} → {report['page_count']}")
-    
-    if report["total_chars"] < 100:
-        report["warnings"].append("Very little text in output PDF")
+        report["warnings"].append(f"Page count increased significantly: {source_page_count} → {report['page_count']}")
     
     doc.close()
     return report
 
-
-# =============================================================================
-# MAIN TRANSLATION PIPELINE
-# =============================================================================
 
 def translate_pdf_unified(
     input_pdf: str,
@@ -852,12 +734,16 @@ def translate_pdf_unified(
     """
     Unified translation pipeline - combines all methods for best results.
     
-    Features:
-    - Smart extraction (Marker → Nougat fallback)
-    - Glossary for consistent terminology
-    - Context window for translation consistency
-    - VRAM-efficient model management
-    - Validation and retry for quality
+    Orchestration:
+    1. Split PDF into pages
+    2. For each page:
+       a. Unload Ollama, load Marker
+       b. Extract with Marker (formulas)
+       c. Unload Marker, extract with PyMuPDF (layout/images)
+       d. Merge extractions intelligently
+       e. Load Ollama, translate
+       f. Create translated page
+    3. Merge all pages
     
     Returns (output_path, status_message)
     """
@@ -875,13 +761,6 @@ def translate_pdf_unified(
     
     translated_dir = output_dir / "translated_pages"
     translated_dir.mkdir(exist_ok=True)
-    
-    # Initialize translation context for consistency
-    translation_context = get_translation_context(target_language)
-    
-    extraction_methods_used = set()
-    total_original_chars = 0
-    total_translated_chars = 0
     
     try:
         # Step 1: Split PDF
@@ -904,30 +783,28 @@ def translate_pdf_unified(
             if progress_callback:
                 progress_callback(base_progress, 100, f"Page {page_num}/{total_pages}: Extracting...")
             
-            # 2a: Prepare for extraction (unload Ollama)
+            # 2a: Prepare for Marker (unload Ollama)
             model_manager.prepare_for_marker()
             
-            # 2b: Smart extraction (Marker → Nougat fallback)
+            # 2b: Extract with Marker (formulas)
             page_marker_dir = marker_dir / f"page_{page_num:03d}"
             page_marker_dir.mkdir(exist_ok=True)
             
-            marker_text, method = smart_extract_text(str(page_path), page_marker_dir, timeout=120)
-            extraction_methods_used.add(method)
-            
-            if marker_text:
-                logger.info(f"Page {page_num}: {method} extracted {len(marker_text)} chars")
-            else:
-                logger.warning(f"Page {page_num}: No text from {method}")
+            marker_text = None
+            try:
+                marker_md_path = extract_with_marker(str(page_path), page_marker_dir)
+                if marker_md_path and Path(marker_md_path).exists():
+                    marker_text = Path(marker_md_path).read_text(encoding='utf-8')
+                    logger.info(f"Page {page_num}: Marker extracted {len(marker_text)} chars")
+            except Exception as e:
+                logger.warning(f"Page {page_num}: Marker failed: {e}")
             
             # 2c: Extract with PyMuPDF (layout/images)
             pymupdf_data = extract_with_pymupdf(page_path)
-            logger.info(f"Page {page_num}: PyMuPDF found {len(pymupdf_data['images'])} images, {len(pymupdf_data.get('full_text', ''))} chars")
+            logger.info(f"Page {page_num}: PyMuPDF found {len(pymupdf_data['images'])} images, {len(pymupdf_data['text_blocks'])} blocks")
             
-            # 2d: Merge extractions - IMPROVED to use both sources
+            # 2d: Merge extractions
             merged_data = merge_extractions(marker_text, pymupdf_data)
-            
-            original_chars = len(merged_data.get("full_text", ""))
-            total_original_chars += original_chars
             
             # 2e: Prepare for translation (load Ollama)
             if not use_openai:
@@ -939,7 +816,7 @@ def translate_pdf_unified(
                     f"Page {page_num}/{total_pages}: Translating..."
                 )
             
-            # 2f: Create translated page with improved translation
+            # 2f: Create translated page
             translated_page_path = translated_dir / f"translated_{page_num:03d}.pdf"
             
             def page_block_progress(current, total, msg):
@@ -956,22 +833,11 @@ def translate_pdf_unified(
                 model,
                 use_openai,
                 openai_api_key,
-                page_block_progress,
-                translation_context
+                page_block_progress
             )
             
             if success and translated_page_path.exists():
                 translated_page_paths.append(translated_page_path)
-                
-                # Count translated chars
-                try:
-                    doc = fitz.open(str(translated_page_path))
-                    trans_chars = len(doc[0].get_text())
-                    total_translated_chars += trans_chars
-                    doc.close()
-                except:
-                    pass
-                
                 logger.info(f"Page {page_num}: Translated successfully")
             else:
                 logger.warning(f"Page {page_num}: Translation failed")
@@ -998,31 +864,20 @@ def translate_pdf_unified(
             stable_output.parent.mkdir(exist_ok=True)
             shutil.copy2(output_pdf, stable_output)
             
-            # Build status message
-            methods_str = ", ".join(sorted(extraction_methods_used - {"none"})) or "PyMuPDF only"
+            # Build status message with sanity report
             warnings_text = ""
             if sanity_report["warnings"]:
                 warnings_text = "\n⚠️ " + "\n⚠️ ".join(sanity_report["warnings"])
             
-            # Calculate translation ratio
-            ratio = total_translated_chars / total_original_chars if total_original_chars > 0 else 0
-            ratio_status = "✅" if 0.5 <= ratio <= 2.0 else "⚠️"
-            
             return str(output_pdf), f"""✅ Unified Translation Complete!
 
 📄 **{sanity_report['page_count']} pages** (source: {total_pages})
-🔬 Extraction: {methods_str}
+🔬 Marker extraction for formulas
 📐 PyMuPDF for layout preservation
 🖼️ Images extracted and preserved
 🌐 Translated to {target_language}
-📚 Glossary: Consistent terminology
-🔗 Context: Translation consistency
-
-📊 **Quality Metrics:**
-  - Original: {total_original_chars:,} chars
-  - Translated: {total_translated_chars:,} chars
-  - Ratio: {ratio_status} {ratio:.1%}
-  - Garbage chars: {sanity_report['garbage_chars_found']}{warnings_text}
+🧹 Blank pages removed: {sanity_report['blank_pages_removed']}
+🔍 Garbage chars found: {sanity_report['garbage_chars_found']}{warnings_text}
 
 📁 Also saved to: {stable_output}"""
         
@@ -1033,10 +888,7 @@ def translate_pdf_unified(
         return None, f"❌ Translation failed: {str(e)}"
 
 
-# =============================================================================
-# CLI INTERFACE
-# =============================================================================
-
+# CLI interface
 if __name__ == "__main__":
     import sys
     
