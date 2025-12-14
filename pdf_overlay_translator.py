@@ -29,6 +29,16 @@ from formula_isolator import (
 from quality_validator import validate_translation, assert_quality
 from table_handler import should_translate_cell, protect_table_numbers, restore_table_numbers
 
+# OCR for images (optional)
+try:
+    from ocr_handler import (
+        check_ocr_available, extract_text_from_images, 
+        get_tesseract_lang, has_significant_text
+    )
+    OCR_ENABLED = check_ocr_available()
+except ImportError:
+    OCR_ENABLED = False
+
 logger = logging.getLogger("pdf_translator.overlay")
 
 
@@ -92,6 +102,10 @@ class TextBlock:
     font_size: float
     font_name: str
     translated: str = ""
+    # Enhanced positioning data
+    baseline_y: float = 0.0  # Original text baseline
+    text_align: str = "left"  # left, center, right
+    line_height: float = 0.0  # Original line spacing
 
 
 @dataclass
@@ -163,8 +177,18 @@ def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
         block_text = ""
         font_sizes = []
         font_names = []
+        line_baselines = []
+        line_heights = []
         
-        for line in block.get("lines", []):
+        lines = block.get("lines", [])
+        for i, line in enumerate(lines):
+            line_bbox = line.get("bbox", [0, 0, 0, 0])
+            line_baselines.append(line_bbox[3])  # y1 = baseline approx
+            
+            if i > 0 and len(lines) > 1:
+                prev_bbox = lines[i-1].get("bbox", [0, 0, 0, 0])
+                line_heights.append(line_bbox[1] - prev_bbox[1])
+            
             for span in line.get("spans", []):
                 span_text = span.get("text", "")
                 block_text += span_text
@@ -181,12 +205,29 @@ def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
         
         avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 10
         primary_font = font_names[0] if font_names else ""
+        baseline = line_baselines[0] if line_baselines else rect.y1
+        avg_line_height = sum(line_heights) / len(line_heights) if line_heights else avg_font_size * 1.2
+        
+        # Detect text alignment from position
+        page_width = page.rect.width
+        block_center = (rect.x0 + rect.x1) / 2
+        page_center = page_width / 2
+        
+        if abs(block_center - page_center) < 50:
+            text_align = "center"
+        elif rect.x0 > page_width * 0.6:
+            text_align = "right"
+        else:
+            text_align = "left"
         
         blocks.append(TextBlock(
             text=block_text,
             rect=rect,
             font_size=avg_font_size,
-            font_name=primary_font
+            font_name=primary_font,
+            baseline_y=baseline,
+            text_align=text_align,
+            line_height=avg_line_height
         ))
     
     return blocks
@@ -428,25 +469,44 @@ def translate_pdf_overlay(
                     
                     if unicode_font:
                         # Calculate required lines and shrink if needed
+                        line_spacing = block.line_height if block.line_height > 0 else font_size * 1.2
+                        
                         while font_size >= min_font_size:
                             max_width = rect.width - 4
                             lines = wrap_text(text, unicode_font, font_size, max_width)
-                            total_height = len(lines) * font_size * 1.2
+                            total_height = len(lines) * line_spacing
                             
                             if total_height <= rect.height:
                                 break  # Fits!
                             font_size -= 0.5
+                            line_spacing = font_size * 1.2  # Adjust spacing with font
                         
                         # Use TextWriter for proper Unicode support
                         tw = fitz.TextWriter(page.rect)
-                        x = rect.x0 + 2
-                        y = rect.y0 + font_size
                         
+                        # === IMPROVED POSITIONING ===
+                        # Use original baseline if available, otherwise calculate
+                        if block.baseline_y > 0:
+                            y = block.baseline_y
+                        else:
+                            y = rect.y0 + font_size
+                        
+                        # Handle text alignment
                         for line in lines:
                             if y > rect.y1:
                                 break
+                            
+                            # Calculate x position based on alignment
+                            line_width = unicode_font.text_length(line, fontsize=font_size)
+                            if block.text_align == "center":
+                                x = rect.x0 + (rect.width - line_width) / 2
+                            elif block.text_align == "right":
+                                x = rect.x1 - line_width - 2
+                            else:  # left
+                                x = rect.x0 + 2
+                            
                             tw.append((x, y), line, font=unicode_font, fontsize=font_size)
-                            y += font_size * 1.2
+                            y += line_spacing
                         
                         tw.write_text(page)
                         
