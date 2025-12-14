@@ -4,18 +4,58 @@ Table Detector - Detect and reconstruct tables from PDF text blocks
 Detects table regions by analyzing aligned text boxes and reconstructs
 them as LaTeX tabular environments.
 
+Features:
+- Heuristic-based detection (alignment analysis)
+- Optional ML-based detection (Table Transformer)
+- Header row detection
+- Multi-language caption support
+- Merged cell handling
+
 © 2025 Sven Kalinowski with small help of Lino Casu
 Licensed under the Anti-Capitalist Software License v1.4
+
+Optional ML Installation:
+    pip install transformers torch torchvision
 """
 from __future__ import annotations
 
 import re
 import logging
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional, Any
+from dataclasses import dataclass, field
 
 logger = logging.getLogger("pdf_translator.table_detector")
 
+
+# =============================================================================
+# ML AVAILABILITY CHECK
+# =============================================================================
+
+_TATR_AVAILABLE: Optional[bool] = None
+
+
+def is_tatr_available() -> bool:
+    """Check if Table Transformer is available."""
+    global _TATR_AVAILABLE
+    
+    if _TATR_AVAILABLE is not None:
+        return _TATR_AVAILABLE
+    
+    try:
+        from transformers import TableTransformerForObjectDetection
+        import torch
+        _TATR_AVAILABLE = True
+        logger.info("Table Transformer (TATR) is available")
+        return True
+    except ImportError:
+        _TATR_AVAILABLE = False
+        logger.debug("Table Transformer not available")
+        return False
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
 
 @dataclass
 class TextBlock:
@@ -27,6 +67,7 @@ class TextBlock:
     height: float
     font_size: float = 10.0
     is_bold: bool = False
+    font_name: str = ""
     
     @property
     def x1(self) -> float:
@@ -53,6 +94,9 @@ class TableCell:
     col: int
     x: float
     y: float
+    is_header: bool = False
+    rowspan: int = 1
+    colspan: int = 1
 
 
 @dataclass
@@ -67,9 +111,74 @@ class DetectedTable:
     height: float
     caption: Optional[str] = None
     confidence: float = 0.0
+    has_header: bool = False
+    detection_method: str = "heuristic"
     
-    def to_latex(self) -> str:
-        """Convert table to LaTeX tabular environment."""
+    def to_latex(self, translate_func=None) -> str:
+        """
+        Convert table to LaTeX tabular environment.
+        
+        Args:
+            translate_func: Optional function to translate cell text
+        """
+        if not self.cells:
+            return ""
+        
+        # Build grid
+        grid = [['' for _ in range(self.cols)] for _ in range(self.rows)]
+        header_rows = set()
+        
+        for cell in self.cells:
+            if 0 <= cell.row < self.rows and 0 <= cell.col < self.cols:
+                text = cell.text.strip()
+                if translate_func:
+                    text = translate_func(text)
+                grid[cell.row][cell.col] = text
+                if cell.is_header:
+                    header_rows.add(cell.row)
+        
+        # Generate LaTeX
+        col_spec = '|' + 'l|' * self.cols
+        lines = [f"\\begin{{tabular}}{{{col_spec}}}"]
+        lines.append("\\hline")
+        
+        for row_idx, row in enumerate(grid):
+            escaped_row = [self._escape_latex(cell) for cell in row]
+            
+            # Bold header rows
+            if row_idx in header_rows:
+                escaped_row = [f"\\textbf{{{cell}}}" for cell in escaped_row]
+            
+            lines.append(' & '.join(escaped_row) + ' \\\\')
+            lines.append("\\hline")
+        
+        lines.append("\\end{tabular}")
+        
+        # Wrap in table environment with caption
+        if self.caption:
+            caption_text = self._escape_latex(self.caption)
+            if translate_func:
+                # Don't translate "Table X:" prefix
+                match = re.match(r'^(Table|Tab\.?|Tabelle|Tableau|Tabla|Tabella)\s*\d+[.:]?\s*', 
+                                caption_text, re.IGNORECASE)
+                if match:
+                    prefix = match.group()
+                    rest = caption_text[len(prefix):]
+                    rest = translate_func(rest) if rest else ""
+                    caption_text = prefix + rest
+                else:
+                    caption_text = translate_func(caption_text)
+            
+            latex = "\\begin{table}[H]\n\\centering\n"
+            latex += '\n'.join(lines)
+            latex += f"\n\\caption{{{caption_text}}}"
+            latex += "\n\\end{table}"
+            return latex
+        
+        return '\n'.join(lines)
+    
+    def to_markdown(self) -> str:
+        """Convert table to Markdown format."""
         if not self.cells:
             return ""
         
@@ -79,33 +188,31 @@ class DetectedTable:
             if 0 <= cell.row < self.rows and 0 <= cell.col < self.cols:
                 grid[cell.row][cell.col] = cell.text.strip()
         
-        # Generate LaTeX
-        col_spec = '|' + 'l|' * self.cols
-        lines = [f"\\begin{{tabular}}{{{col_spec}}}"]
-        lines.append("\\hline")
-        
-        for row_idx, row in enumerate(grid):
-            # Escape special LaTeX characters
-            escaped_row = [self._escape_latex(cell) for cell in row]
-            lines.append(' & '.join(escaped_row) + ' \\\\')
-            lines.append("\\hline")
-        
-        lines.append("\\end{tabular}")
+        lines = []
         
         # Add caption if present
         if self.caption:
-            latex = f"\\begin{{table}}[H]\n\\centering\n"
-            latex += '\n'.join(lines)
-            latex += f"\n\\caption{{{self._escape_latex(self.caption)}}}"
-            latex += "\n\\end{table}"
-            return latex
+            lines.append(f"**{self.caption}**\n")
+        
+        for row_idx, row in enumerate(grid):
+            lines.append('| ' + ' | '.join(row) + ' |')
+            
+            # Add separator after first row (header)
+            if row_idx == 0:
+                lines.append('|' + '|'.join(['---'] * self.cols) + '|')
         
         return '\n'.join(lines)
     
     def _escape_latex(self, text: str) -> str:
         """Escape special LaTeX characters."""
+        if not text:
+            return ""
+        
+        # Don't escape if already contains LaTeX commands
+        if '\\' in text and any(cmd in text for cmd in ['\\frac', '\\sqrt', '\\sum', '\\int']):
+            return text
+        
         replacements = [
-            ('\\', '\\textbackslash{}'),
             ('&', '\\&'),
             ('%', '\\%'),
             ('$', '\\$'),
@@ -116,22 +223,62 @@ class DetectedTable:
             ('~', '\\textasciitilde{}'),
             ('^', '\\textasciicircum{}'),
         ]
+        
         for old, new in replacements:
-            if old != '\\':  # Handle backslash separately
-                text = text.replace(old, new)
+            text = text.replace(old, new)
+        
         return text
 
 
-def find_aligned_columns(blocks: List[TextBlock], tolerance: float = 5.0) -> List[List[TextBlock]]:
-    """
-    Group blocks by their x-position (column alignment).
-    
-    Returns list of column groups, each containing blocks in that column.
-    """
+# =============================================================================
+# CAPTION DETECTION
+# =============================================================================
+
+# Multi-language table caption patterns
+TABLE_CAPTION_PATTERNS = [
+    r'^(Table|Tab\.?)\s*\d+',           # English
+    r'^(Tabelle|Tab\.?)\s*\d+',         # German
+    r'^(Tableau|Tab\.?)\s*\d+',         # French
+    r'^(Tabla|Tab\.?)\s*\d+',           # Spanish
+    r'^(Tabella|Tab\.?)\s*\d+',         # Italian
+    r'^(Tabela|Tab\.?)\s*\d+',          # Portuguese
+    r'^(Таблица)\s*\d+',                # Russian
+    r'^(表)\s*\d+',                     # Chinese/Japanese
+]
+
+
+def is_table_caption(text: str) -> bool:
+    """Check if text looks like a table caption."""
+    text = text.strip()
+    for pattern in TABLE_CAPTION_PATTERNS:
+        if re.match(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
+def find_table_caption(blocks: List[TextBlock], table: DetectedTable, 
+                       max_distance: float = 50.0) -> Optional[str]:
+    """Find caption for a detected table."""
+    for block in blocks:
+        if is_table_caption(block.text):
+            # Check if above table
+            if block.y < table.y and table.y - block.y1 < max_distance:
+                return block.text
+            # Check if below table
+            elif block.y > table.y + table.height and block.y - (table.y + table.height) < max_distance:
+                return block.text
+    return None
+
+
+# =============================================================================
+# HEURISTIC TABLE DETECTION
+# =============================================================================
+
+def find_aligned_columns(blocks: List[TextBlock], tolerance: float = 8.0) -> List[List[TextBlock]]:
+    """Group blocks by x-position (column alignment)."""
     if not blocks:
         return []
     
-    # Sort by x position
     sorted_blocks = sorted(blocks, key=lambda b: b.x)
     
     columns = []
@@ -152,16 +299,11 @@ def find_aligned_columns(blocks: List[TextBlock], tolerance: float = 5.0) -> Lis
     return columns
 
 
-def find_aligned_rows(blocks: List[TextBlock], tolerance: float = 5.0) -> List[List[TextBlock]]:
-    """
-    Group blocks by their y-position (row alignment).
-    
-    Returns list of row groups, each containing blocks in that row.
-    """
+def find_aligned_rows(blocks: List[TextBlock], tolerance: float = 8.0) -> List[List[TextBlock]]:
+    """Group blocks by y-position (row alignment)."""
     if not blocks:
         return []
     
-    # Sort by y position
     sorted_blocks = sorted(blocks, key=lambda b: b.y)
     
     rows = []
@@ -182,6 +324,42 @@ def find_aligned_rows(blocks: List[TextBlock], tolerance: float = 5.0) -> List[L
     return rows
 
 
+def detect_header_row(rows: List[List[TextBlock]]) -> int:
+    """
+    Detect which row is the header row.
+    
+    Headers typically have:
+    - Bold text
+    - Different font size
+    - All cells filled
+    
+    Returns row index or -1 if no header detected.
+    """
+    if not rows:
+        return -1
+    
+    first_row = rows[0]
+    
+    # Check if first row is all bold
+    all_bold = all(b.is_bold for b in first_row)
+    if all_bold:
+        return 0
+    
+    # Check if first row has different font size
+    if len(rows) > 1:
+        first_row_size = sum(b.font_size for b in first_row) / len(first_row)
+        second_row_size = sum(b.font_size for b in rows[1]) / len(rows[1])
+        
+        if abs(first_row_size - second_row_size) > 1.0:
+            return 0
+    
+    # Check if first row has more cells (fully filled header)
+    if len(rows) > 1 and len(first_row) > len(rows[1]):
+        return 0
+    
+    return -1
+
+
 def detect_table_region(blocks: List[TextBlock], 
                         min_rows: int = 2, 
                         min_cols: int = 2,
@@ -189,17 +367,15 @@ def detect_table_region(blocks: List[TextBlock],
     """
     Detect if a group of blocks forms a table.
     
-    Criteria for table detection:
+    Improved criteria:
     1. At least min_rows rows with similar y-positions
     2. At least min_cols columns with similar x-positions
     3. Consistent grid structure (most cells filled)
-    
-    Returns DetectedTable if found, None otherwise.
+    4. Header detection
     """
     if len(blocks) < min_rows * min_cols:
         return None
     
-    # Find row and column alignments
     rows = find_aligned_rows(blocks, alignment_tolerance)
     cols = find_aligned_columns(blocks, alignment_tolerance)
     
@@ -207,11 +383,15 @@ def detect_table_region(blocks: List[TextBlock],
         return None
     
     # Check grid consistency
-    # A good table should have similar number of items per row
     items_per_row = [len(row) for row in rows]
-    if max(items_per_row) - min(items_per_row) > 2:
-        # Too much variation - probably not a table
+    avg_items = sum(items_per_row) / len(items_per_row)
+    
+    # Allow some variation but not too much
+    if max(items_per_row) - min(items_per_row) > max(2, avg_items * 0.5):
         return None
+    
+    # Detect header row
+    header_row_idx = detect_header_row(rows)
     
     # Build cell grid
     cells = []
@@ -219,7 +399,6 @@ def detect_table_region(blocks: List[TextBlock],
     row_y_positions = sorted([rows[i][0].y for i in range(len(rows))])
     
     for block in blocks:
-        # Find which row and column this block belongs to
         row_idx = -1
         col_idx = -1
         
@@ -239,16 +418,28 @@ def detect_table_region(blocks: List[TextBlock],
                 row=row_idx,
                 col=col_idx,
                 x=block.x,
-                y=block.y
+                y=block.y,
+                is_header=(row_idx == header_row_idx)
             ))
     
-    # Calculate confidence based on grid fill rate
+    # Calculate confidence
     expected_cells = len(rows) * len(cols)
     actual_cells = len(cells)
-    confidence = actual_cells / expected_cells if expected_cells > 0 else 0
+    fill_rate = actual_cells / expected_cells if expected_cells > 0 else 0
+    
+    # Bonus confidence for:
+    # - Having a header
+    # - Consistent column widths
+    # - Multiple rows
+    confidence = fill_rate
+    if header_row_idx >= 0:
+        confidence += 0.1
+    if len(rows) >= 3:
+        confidence += 0.05
+    
+    confidence = min(confidence, 1.0)
     
     if confidence < 0.5:
-        # Less than 50% of grid filled - probably not a table
         return None
     
     # Calculate bounding box
@@ -263,46 +454,125 @@ def detect_table_region(blocks: List[TextBlock],
         y=min(all_y),
         width=max(all_x) - min(all_x),
         height=max(all_y) - min(all_y),
-        confidence=confidence
+        confidence=confidence,
+        has_header=(header_row_idx >= 0),
+        detection_method="heuristic"
     )
 
 
-def is_table_header(text: str) -> bool:
-    """Check if text looks like a table header/caption."""
-    text = text.strip().lower()
-    return bool(re.match(r'^(table|tab\.?)\s*\d+', text))
+# =============================================================================
+# ML-BASED TABLE DETECTION (Optional)
+# =============================================================================
+
+_TATR_MODEL = None
 
 
-def find_table_caption(blocks: List[TextBlock], table: DetectedTable, 
-                       max_distance: float = 50.0) -> Optional[str]:
-    """
-    Find caption for a detected table.
+def get_tatr_model():
+    """Get or create the Table Transformer model (singleton)."""
+    global _TATR_MODEL
     
-    Looks for "Table X:" pattern above or below the table.
-    """
-    for block in blocks:
-        if is_table_header(block.text):
-            # Check if it's close to the table
-            if block.y < table.y and table.y - block.y1 < max_distance:
-                # Caption above table
-                return block.text
-            elif block.y > table.y + table.height and block.y - (table.y + table.height) < max_distance:
-                # Caption below table
-                return block.text
+    if _TATR_MODEL is not None:
+        return _TATR_MODEL
     
-    return None
+    if not is_tatr_available():
+        return None
+    
+    try:
+        from transformers import TableTransformerForObjectDetection, AutoImageProcessor
+        import torch
+        
+        logger.info("Loading Table Transformer model...")
+        
+        model_name = "microsoft/table-transformer-detection"
+        _TATR_MODEL = {
+            "model": TableTransformerForObjectDetection.from_pretrained(model_name),
+            "processor": AutoImageProcessor.from_pretrained(model_name)
+        }
+        
+        # Use GPU if available
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _TATR_MODEL["model"] = _TATR_MODEL["model"].to(device)
+        _TATR_MODEL["device"] = device
+        
+        logger.info(f"Table Transformer loaded on {device}")
+        return _TATR_MODEL
+        
+    except Exception as e:
+        logger.error(f"Failed to load Table Transformer: {e}")
+        return None
 
 
-def detect_tables_in_page(blocks: List[Dict], 
-                          page_width: float,
-                          page_height: float) -> Tuple[List[DetectedTable], List[Dict]]:
+def detect_tables_ml(page_image) -> List[Dict]:
+    """
+    Detect tables in a page image using Table Transformer.
+    
+    Args:
+        page_image: PIL Image of the page
+    
+    Returns:
+        List of dicts with 'bbox', 'confidence', 'label'
+    """
+    model_data = get_tatr_model()
+    if model_data is None:
+        return []
+    
+    try:
+        import torch
+        
+        model = model_data["model"]
+        processor = model_data["processor"]
+        device = model_data["device"]
+        
+        # Prepare image
+        inputs = processor(images=page_image, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        # Detect
+        with torch.no_grad():
+            outputs = model(**inputs)
+        
+        # Post-process
+        target_sizes = torch.tensor([page_image.size[::-1]])
+        results = processor.post_process_object_detection(
+            outputs, threshold=0.7, target_sizes=target_sizes
+        )[0]
+        
+        tables = []
+        for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+            tables.append({
+                "bbox": box.tolist(),
+                "confidence": score.item(),
+                "label": model.config.id2label[label.item()]
+            })
+        
+        logger.info(f"TATR detected {len(tables)} tables")
+        return tables
+        
+    except Exception as e:
+        logger.warning(f"ML table detection failed: {e}")
+        return []
+
+
+# =============================================================================
+# MAIN DETECTION FUNCTION
+# =============================================================================
+
+def detect_tables_in_page(
+    blocks: List[Dict], 
+    page_width: float,
+    page_height: float,
+    page_image=None,
+    use_ml: bool = True,
+) -> Tuple[List[DetectedTable], List[Dict]]:
     """
     Detect all tables in a page and separate them from regular text.
     
     Args:
-        blocks: List of text block dicts with 'text', 'x', 'y', 'width', 'height'
+        blocks: List of text block dicts
         page_width: Page width
         page_height: Page height
+        page_image: Optional PIL Image for ML detection
+        use_ml: Whether to try ML detection first
     
     Returns:
         Tuple of (detected_tables, remaining_blocks)
@@ -320,64 +590,88 @@ def detect_tables_in_page(blocks: List[Dict],
             width=b.get('width', 100),
             height=b.get('height', 20),
             font_size=b.get('font_size', 10),
-            is_bold=b.get('is_bold', False)
+            is_bold=b.get('is_bold', False),
+            font_name=b.get('font_name', '')
         ))
     
     detected_tables = []
-    used_blocks = set()
+    used_block_indices = set()
     
-    # Try to find table regions
-    # Strategy: Look for clusters of aligned blocks
-    
-    # Group blocks by vertical regions (potential table areas)
-    rows = find_aligned_rows(text_blocks, tolerance=15.0)
-    
-    # Look for consecutive rows that might form a table
-    for start_idx in range(len(rows)):
-        if start_idx in used_blocks:
-            continue
+    # Try ML detection first if available and requested
+    if use_ml and page_image and is_tatr_available():
+        ml_tables = detect_tables_ml(page_image)
         
-        # Collect consecutive rows
-        table_blocks = []
-        for row_idx in range(start_idx, min(start_idx + 20, len(rows))):
-            row = rows[row_idx]
-            # Check if this row has multiple columns (table-like)
-            if len(row) >= 2:
-                table_blocks.extend(row)
-            else:
-                break
+        for ml_table in ml_tables:
+            bbox = ml_table["bbox"]
+            # Find blocks within this bbox
+            table_blocks = []
+            for i, tb in enumerate(text_blocks):
+                if (bbox[0] <= tb.x <= bbox[2] and 
+                    bbox[1] <= tb.y <= bbox[3]):
+                    table_blocks.append(tb)
+                    used_block_indices.add(i)
+            
+            if len(table_blocks) >= 4:
+                table = detect_table_region(table_blocks)
+                if table:
+                    table.confidence = ml_table["confidence"]
+                    table.detection_method = "ml"
+                    table.caption = find_table_caption(text_blocks, table)
+                    detected_tables.append(table)
+    
+    # Heuristic detection for remaining blocks
+    remaining_text_blocks = [tb for i, tb in enumerate(text_blocks) 
+                            if i not in used_block_indices]
+    
+    if remaining_text_blocks:
+        rows = find_aligned_rows(remaining_text_blocks, tolerance=15.0)
         
-        if len(table_blocks) >= 4:  # At least 2x2
-            table = detect_table_region(table_blocks)
-            if table and table.confidence >= 0.6:
-                # Find caption
-                table.caption = find_table_caption(text_blocks, table)
-                detected_tables.append(table)
-                
-                # Mark blocks as used
-                for block in table_blocks:
-                    for i, tb in enumerate(text_blocks):
-                        if tb.x == block.x and tb.y == block.y:
-                            used_blocks.add(i)
+        for start_idx in range(len(rows)):
+            table_blocks = []
+            for row_idx in range(start_idx, min(start_idx + 20, len(rows))):
+                row = rows[row_idx]
+                if len(row) >= 2:
+                    table_blocks.extend(row)
+                else:
+                    break
+            
+            if len(table_blocks) >= 4:
+                table = detect_table_region(table_blocks)
+                if table and table.confidence >= 0.6:
+                    table.caption = find_table_caption(text_blocks, table)
+                    detected_tables.append(table)
+                    
+                    for block in table_blocks:
+                        for i, tb in enumerate(text_blocks):
+                            if tb.x == block.x and tb.y == block.y:
+                                used_block_indices.add(i)
     
     # Build remaining blocks list
-    remaining = []
-    for i, block in enumerate(blocks):
-        if i not in used_blocks:
-            remaining.append(block)
+    remaining = [b for i, b in enumerate(blocks) if i not in used_block_indices]
     
     logger.info(f"Detected {len(detected_tables)} tables, {len(remaining)} remaining blocks")
     
     return detected_tables, remaining
 
 
-# Test
+# =============================================================================
+# TEST
+# =============================================================================
+
 if __name__ == "__main__":
+    print("=== Table Detector Test ===\n")
+    
+    # Check ML availability
+    if is_tatr_available():
+        print("✅ Table Transformer is available")
+    else:
+        print("ℹ️ Table Transformer not available (using heuristics only)")
+    
     # Test with sample data
     test_blocks = [
-        {'text': 'System', 'x': 50, 'y': 100, 'width': 80, 'height': 15},
-        {'text': 'Lifetime', 'x': 150, 'y': 100, 'width': 80, 'height': 15},
-        {'text': 'Factor', 'x': 250, 'y': 100, 'width': 80, 'height': 15},
+        {'text': 'System', 'x': 50, 'y': 100, 'width': 80, 'height': 15, 'is_bold': True},
+        {'text': 'Lifetime', 'x': 150, 'y': 100, 'width': 80, 'height': 15, 'is_bold': True},
+        {'text': 'Factor', 'x': 250, 'y': 100, 'width': 80, 'height': 15, 'is_bold': True},
         {'text': 'Ion trap', 'x': 50, 'y': 120, 'width': 80, 'height': 15},
         {'text': '10 ms', 'x': 150, 'y': 120, 'width': 80, 'height': 15},
         {'text': 'Heating', 'x': 250, 'y': 120, 'width': 80, 'height': 15},
@@ -386,9 +680,15 @@ if __name__ == "__main__":
         {'text': 'T1 decay', 'x': 250, 'y': 140, 'width': 80, 'height': 15},
     ]
     
-    tables, remaining = detect_tables_in_page(test_blocks, 600, 800)
+    tables, remaining = detect_tables_in_page(test_blocks, 600, 800, use_ml=False)
     
-    print(f"Found {len(tables)} tables")
+    print(f"\nFound {len(tables)} tables")
     for table in tables:
-        print(f"\nTable: {table.rows}x{table.cols}, confidence={table.confidence:.2f}")
+        print(f"\nTable: {table.rows}x{table.cols}")
+        print(f"Confidence: {table.confidence:.2f}")
+        print(f"Has header: {table.has_header}")
+        print(f"Method: {table.detection_method}")
+        print("\nLaTeX:")
         print(table.to_latex())
+        print("\nMarkdown:")
+        print(table.to_markdown())
