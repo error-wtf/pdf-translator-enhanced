@@ -117,8 +117,51 @@ UNICODE_MATH_PATTERNS = [
     (r'\d+\.?\d*\s*(?:Hz|kHz|MHz|GHz|THz|nm|μm|µm|mm|cm|m|km|Å|pm|fm|ns|μs|µs|ms|s|eV|keV|MeV|GeV|TeV|K|°C|Pa|kPa|MPa|GPa|J|kJ|W|kW|MW|V|mV|kV|A|mA|μA|Ω|kΩ|MΩ|F|μF|nF|pF|H|mH|T|mol|M|L|mL|g|mg|μg|kg)\b', 'unit_expr'),
 ]
 
+# =============================================================================
+# REFERENCE AND CITATION PATTERNS - PROTECT FROM TRANSLATION
+# =============================================================================
+
+REFERENCE_PATTERNS = [
+    # Numeric references: [1], [1, 2], [1-5], [1,2,3]
+    (r'\[\d+(?:\s*[-–,]\s*\d+)*\]', 'numeric_ref'),
+    
+    # Figure/Table references
+    (r'(?:Fig(?:ure)?|Tab(?:le)?|Eq(?:uation)?|Sec(?:tion)?|Ch(?:apter)?|App(?:endix)?)\.\s*\d+(?:\.\d+)*[a-z]?', 'figure_ref'),
+    (r'(?:Figure|Table|Equation|Section|Chapter|Appendix)\s+\d+(?:\.\d+)*[a-z]?', 'figure_ref_full'),
+    
+    # Equation references: Eq. (1), Eqs. (1-3)
+    (r'Eqs?\.\s*\(\d+(?:\s*[-–,]\s*\d+)*\)', 'eq_ref'),
+    
+    # Section symbols: § 3, §§ 3-5
+    (r'§+\s*\d+(?:\s*[-–]\s*\d+)?', 'section_ref'),
+    
+    # Page references: p. 5, pp. 5-10
+    (r'pp?\.\s*\d+(?:\s*[-–]\s*\d+)?', 'page_ref'),
+]
+
+# =============================================================================
+# FOOTNOTE PATTERNS - PROTECT MARKERS
+# =============================================================================
+
+FOOTNOTE_PATTERNS = [
+    # Superscript numbers at word end (footnote markers)
+    (r'(?<=[a-zA-Z.,;:!?])[¹²³⁴⁵⁶⁷⁸⁹⁰]+', 'footnote_super'),
+    
+    # Asterisk/dagger footnotes
+    (r'[*†‡§¶#]+(?=\s|$)', 'footnote_symbol'),
+    
+    # LaTeX footnote commands
+    (r'\\footnote\{[^}]*\}', 'latex_footnote'),
+    (r'\\footnotemark(?:\[\d+\])?', 'footnote_mark'),
+]
+
 # All patterns combined for extraction
-ALL_MATH_PATTERNS = FORMULA_PATTERNS + [(p, t) for p, t in UNICODE_MATH_PATTERNS]
+ALL_MATH_PATTERNS = (
+    FORMULA_PATTERNS + 
+    [(p, t) for p, t in UNICODE_MATH_PATTERNS] +
+    REFERENCE_PATTERNS +
+    FOOTNOTE_PATTERNS
+)
 
 # Commands that should be extracted but aren't math
 COMMAND_PATTERNS = [

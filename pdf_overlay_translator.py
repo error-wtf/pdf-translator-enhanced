@@ -26,6 +26,8 @@ from formula_isolator import (
     assert_no_corruption,
     regression_check,
 )
+from quality_validator import validate_translation, assert_quality
+from table_handler import should_translate_cell, protect_table_numbers, restore_table_numbers
 
 logger = logging.getLogger("pdf_translator.overlay")
 
@@ -385,6 +387,9 @@ def translate_pdf_overlay(
                 if not assert_no_corruption(translated):
                     result.warnings.append(f"Corruption detected in block: {block.text[:30]}...")
                     translated = block.text  # Fallback to original
+                
+                # Quality validation with automatic fallback
+                translated = assert_quality(block.text, translated, min_score=0.7)
                 
                 if translated == block.text:
                     result.blocks_skipped += 1
