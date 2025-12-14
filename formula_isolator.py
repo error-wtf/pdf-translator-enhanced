@@ -745,7 +745,7 @@ def assert_no_corruption(text: str, raise_on_fail: bool = False) -> bool:
     if '\ufffd' in text:
         issues.append("Found replacement character")
     
-    if re.search(r'⟦[A-Z]+_[a-f0-9]+_\d+⟧', text):
+    if re.search(r'⟦[A-Z]+_[a-fA-F0-9]+_\d+⟧', text, re.IGNORECASE):
         issues.append("Found unrestored placeholder")
     
     if issues:
