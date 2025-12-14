@@ -26,6 +26,13 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
+# Import formula protection
+from formula_isolator import (
+    extract_and_protect,
+    normalize_output,
+    assert_no_corruption,
+)
+
 logger = logging.getLogger("docx_translator")
 
 # =============================================================================
@@ -171,7 +178,7 @@ def translate_text_ollama(
     target_language: str,
     glossary: Dict[str, str] = None
 ) -> str:
-    """Translate single text using Ollama (fallback)."""
+    """Translate single text using Ollama with formula protection."""
     import requests
     
     if not text.strip():
@@ -180,6 +187,9 @@ def translate_text_ollama(
     # Skip if only numbers/symbols
     if not re.search(r'[a-zA-Z]{2,}', text):
         return text
+    
+    # === FORMULA PROTECTION ===
+    protected_text, restore_func = extract_and_protect(text)
     
     glossary_text = ""
     if glossary:
@@ -192,12 +202,13 @@ def translate_text_ollama(
 {glossary_text}
 CRITICAL RULES:
 1. Output ONLY the translation - no explanations, no quotes
-2. Keep ALL mathematical symbols EXACTLY as they are: Δ, Φ, ω, ×, ⁻, ¹, ², ³, ⁴, ⁵, ⁶, ⁷, ⁸, ⁹, ⁰, π, α, β, γ, ∞, ∑, ∫, ≈, ≠, ≤, ≥, —, –
-3. Keep ALL numbers and units unchanged
-4. Keep author names unchanged (Carmen Wrede, Lino Casu)
-5. Keep URLs and emails unchanged
-6. Use formal scientific German
-7. Translate section headers: Abstract→Zusammenfassung, Introduction→Einleitung, etc."""
+2. Keep ALL ⟦...⟧ placeholders EXACTLY unchanged (these protect formulas)
+3. Keep ALL mathematical symbols EXACTLY as they are: Δ, Φ, ω, ×, ⁻, ¹, ², ³, ħ, ∇, Ψ, π, α, β, γ, ∞, ∑, ∫, ≈, ≠, ≤, ≥
+4. Keep ALL numbers and units unchanged
+5. Keep author names unchanged
+6. Keep URLs and emails unchanged
+7. Do NOT output HTML tags like <sup> or <sub>
+8. Translate section headers: Abstract→Zusammenfassung, Introduction→Einleitung, etc."""
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -207,7 +218,7 @@ CRITICAL RULES:
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Translate this scientific text to {target_language}:\n\n{text}"}
+                        {"role": "user", "content": f"Translate this scientific text to {target_language}:\n\n{protected_text}"}
                     ],
                     "stream": False,
                     "options": {"temperature": 0.1, "num_predict": 4096}
@@ -223,8 +234,16 @@ CRITICAL RULES:
                 result = re.sub(r'^```\w*\n?', '', result)
                 result = re.sub(r'\n?```$', '', result)
                 
-                if result and len(result) >= len(text) * 0.3:
-                    return result
+                if result and len(result) >= len(protected_text) * 0.3:
+                    # Restore formulas and normalize output
+                    restored = restore_func(result)
+                    restored = normalize_output(restored, mode="unicode")
+                    
+                    # Validate no corruption
+                    if assert_no_corruption(restored):
+                        return restored
+                    else:
+                        logger.warning("Corruption detected, retrying...")
             
             time.sleep(RETRY_DELAY * (attempt + 1))
             
