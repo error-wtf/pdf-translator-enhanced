@@ -40,12 +40,22 @@ MIN_TEXT_LENGTH = 3  # Reduced from 15 to translate short titles
 MAX_RETRIES = 5
 RETRY_DELAY = 1.5
 
-# Font that supports Unicode math symbols
+# Font that supports Unicode math symbols - PRIORITY ORDER
 UNICODE_FONT_PATHS = [
-    "C:/Windows/Fonts/cambria.ttc",      # Windows - best for math
-    "C:/Windows/Fonts/DejaVuSans.ttf",   # Windows fallback
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
-    "/System/Library/Fonts/STIXGeneral.otf",  # macOS
+    # Windows - Math-capable fonts
+    "C:/Windows/Fonts/STIX2Math.otf",         # STIX2 - best math coverage
+    "C:/Windows/Fonts/cambria.ttc",           # Cambria Math
+    "C:/Windows/Fonts/Cambria Math.ttf",      # Cambria Math alternate
+    "C:/Windows/Fonts/DejaVuSans.ttf",        # DejaVu - good Unicode
+    "C:/Windows/Fonts/seguisym.ttf",          # Segoe UI Symbol
+    "C:/Windows/Fonts/arial.ttf",             # Arial - basic fallback
+    # Linux
+    "/usr/share/fonts/opentype/stix/STIX2Math.otf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    # macOS
+    "/System/Library/Fonts/STIXGeneral.otf",
+    "/Library/Fonts/STIX2Math.otf",
 ]
 
 # Scientific glossary for German
@@ -405,45 +415,67 @@ def translate_pdf_overlay(
             
             page.apply_redactions()
             
-            # Insert translated text with Unicode font
+            # Insert translated text with Unicode font + SHRINK-TO-FIT
             for block in blocks_to_replace:
                 try:
+                    text = block.translated
+                    rect = block.rect
+                    base_size = block.font_size
+                    
+                    # === SHRINK-TO-FIT: Reduce font size if text doesn't fit ===
+                    font_size = base_size
+                    min_font_size = max(6, base_size * 0.6)  # Don't go below 60% or 6pt
+                    
                     if unicode_font:
+                        # Calculate required lines and shrink if needed
+                        while font_size >= min_font_size:
+                            max_width = rect.width - 4
+                            lines = wrap_text(text, unicode_font, font_size, max_width)
+                            total_height = len(lines) * font_size * 1.2
+                            
+                            if total_height <= rect.height:
+                                break  # Fits!
+                            font_size -= 0.5
+                        
                         # Use TextWriter for proper Unicode support
                         tw = fitz.TextWriter(page.rect)
-                        
-                        # Calculate position
-                        x = block.rect.x0 + 2
-                        y = block.rect.y0 + block.font_size
-                        
-                        # Wrap text to fit rectangle
-                        max_width = block.rect.width - 4
-                        lines = wrap_text(block.translated, unicode_font, block.font_size, max_width)
+                        x = rect.x0 + 2
+                        y = rect.y0 + font_size
                         
                         for line in lines:
-                            if y > block.rect.y1:
+                            if y > rect.y1:
                                 break
-                            tw.append((x, y), line, font=unicode_font, fontsize=block.font_size)
-                            y += block.font_size * 1.2
+                            tw.append((x, y), line, font=unicode_font, fontsize=font_size)
+                            y += font_size * 1.2
                         
                         tw.write_text(page)
+                        
+                        if font_size < base_size:
+                            logger.debug(f"Shrunk font: {base_size:.1f} -> {font_size:.1f}")
                     else:
-                        # Fallback to standard font
-                        page.insert_textbox(
-                            block.rect,
-                            block.translated,
-                            fontsize=block.font_size,
-                            fontname="helv",
-                            align=fitz.TEXT_ALIGN_LEFT
-                        )
+                        # Fallback with shrink-to-fit
+                        while font_size >= min_font_size:
+                            rc = page.insert_textbox(
+                                rect, text,
+                                fontsize=font_size,
+                                fontname="helv",
+                                align=fitz.TEXT_ALIGN_LEFT
+                            )
+                            if rc >= 0:  # Text fits
+                                break
+                            font_size -= 0.5
+                            # Clear and retry
+                            page.add_redact_annot(rect, fill=(1, 1, 1))
+                            page.apply_redactions()
+                            
                 except Exception as e:
                     logger.warning(f"Text insertion failed: {e}")
-                    # Fallback
+                    # Ultimate fallback
                     try:
                         page.insert_textbox(
                             block.rect,
-                            block.translated,
-                            fontsize=block.font_size * 0.9,
+                            block.translated[:200],  # Truncate if needed
+                            fontsize=block.font_size * 0.7,
                             fontname="helv",
                             align=fitz.TEXT_ALIGN_LEFT
                         )
