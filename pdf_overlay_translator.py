@@ -18,6 +18,15 @@ from typing import Optional, List, Dict, Tuple, Callable
 from dataclasses import dataclass, field
 import fitz  # PyMuPDF
 
+# Import formula protection and validation
+from formula_isolator import (
+    extract_and_protect,
+    normalize_output,
+    audit_utf8,
+    assert_no_corruption,
+    regression_check,
+)
+
 logger = logging.getLogger("pdf_translator.overlay")
 
 
@@ -234,6 +243,11 @@ def translate_text_ollama(
     if not text.strip():
         return text
     
+    # UTF-8 audit before translation
+    utf8_warnings = audit_utf8(text, "input")
+    if utf8_warnings:
+        logger.warning(f"UTF-8 issues in input: {utf8_warnings}")
+    
     # Quick glossary lookup for single words
     text_lower = text.strip().lower()
     if glossary and text_lower in glossary:
@@ -250,10 +264,12 @@ def translate_text_ollama(
 {glossary_text}
 CRITICAL RULES:
 - Output ONLY the translation, nothing else
-- Keep ALL mathematical symbols unchanged: Δ, Φ, ω, ×, ⁻, ¹, ⁶, —, etc.
+- Keep ALL ⟦...⟧ placeholders EXACTLY unchanged (these protect formulas)
+- Keep ALL mathematical symbols unchanged: Δ, Φ, ω, ×, ⁻, ¹, ⁶, —, ħ, ∇, Ψ, etc.
 - Keep numbers and units unchanged
 - Keep author names unchanged
 - Use correct scientific terminology from glossary
+- Do NOT output HTML tags like <sup> or <sub>
 - For short words like "Abstract", translate directly"""
 
     for attempt in range(MAX_RETRIES):
@@ -351,10 +367,24 @@ def translate_pdf_overlay(
                     result.blocks_skipped += 1
                     continue
                 
-                # Translate
-                translated = translate_text_ollama(
-                    block.text, model, target_language, glossary
+                # === MATH PROTECTION: Extract and mask formulas ===
+                protected_text, restore_func = extract_and_protect(block.text)
+                
+                # Translate (formulas are now placeholders)
+                translated_protected = translate_text_ollama(
+                    protected_text, model, target_language, glossary
                 )
+                
+                # Restore formulas
+                translated = restore_func(translated_protected)
+                
+                # Normalize output (remove HTML artifacts, ensure consistent format)
+                translated = normalize_output(translated, mode="unicode")
+                
+                # Validate no corruption
+                if not assert_no_corruption(translated):
+                    result.warnings.append(f"Corruption detected in block: {block.text[:30]}...")
+                    translated = block.text  # Fallback to original
                 
                 if translated == block.text:
                     result.blocks_skipped += 1
