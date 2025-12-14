@@ -32,19 +32,100 @@ logger = logging.getLogger("pdf_translator.perfect")
 # STRICT QUALITY SETTINGS
 # =============================================================================
 
-# Validation thresholds
-MIN_TRANSLATION_RATIO = 0.7   # At least 70% of original length
-MAX_TRANSLATION_RATIO = 2.0   # At most 200% of original length
-MIN_SENTENCE_RATIO = 0.85     # At least 85% of sentences preserved
-MAX_SENTENCE_RATIO = 1.3      # At most 130% of sentences
+MIN_TRANSLATION_RATIO = 0.7
+MAX_TRANSLATION_RATIO = 2.0
+MIN_SENTENCE_RATIO = 0.85
+MAX_SENTENCE_RATIO = 1.3
 
-# Chunking - smaller for better quality
 MAX_CHUNK_CHARS = 2000
 OVERLAP_CHARS = 150
 
-# Retry settings
-MAX_RETRIES = 7               # More retries for perfect quality
+MAX_RETRIES = 7
 RETRY_DELAY_BASE = 1.5
+
+
+# =============================================================================
+# SCIENTIFIC GLOSSARY - MANDATORY TRANSLATIONS
+# =============================================================================
+
+SCIENTIFIC_GLOSSARY = {
+    "German": {
+        # Quantum Physics
+        "entanglement": "Verschränkung",
+        "entangled": "verschränkt",
+        "superposition": "Superposition",
+        "coherence": "Kohärenz",
+        "decoherence": "Dekohärenz",
+        "qubit": "Qubit",
+        "quantum": "Quanten-",
+        "wave function": "Wellenfunktion",
+        "eigenstate": "Eigenzustand",
+        "eigenvalue": "Eigenwert",
+        "observable": "Observable",
+        "measurement": "Messung",
+        "collapse": "Kollaps",
+        "spin": "Spin",
+        "photon": "Photon",
+        "phonon": "Phonon",
+        "fermion": "Fermion",
+        "boson": "Boson",
+        # Relativity
+        "spacetime": "Raumzeit",
+        "time dilation": "Zeitdilatation",
+        "gravitational redshift": "Gravitationsrotverschiebung",
+        "frame of reference": "Bezugssystem",
+        "proper time": "Eigenzeit",
+        "world line": "Weltlinie",
+        "metric tensor": "metrischer Tensor",
+        "curvature": "Krümmung",
+        "geodesic": "Geodäte",
+        # General Physics
+        "fidelity": "Fidelität",
+        "lifetime": "Lebensdauer",
+        "decay": "Zerfall",
+        "coupling": "Kopplung",
+        "interaction": "Wechselwirkung",
+        "correlation": "Korrelation",
+        "fluctuation": "Fluktuation",
+        "noise": "Rauschen",
+        "drift": "Drift",
+        "phase": "Phase",
+        "amplitude": "Amplitude",
+        "frequency": "Frequenz",
+        "wavelength": "Wellenlänge",
+        # Computing
+        "gate": "Gatter",
+        "circuit": "Schaltkreis",
+        "error correction": "Fehlerkorrektur",
+        "threshold": "Schwellenwert",
+        "overhead": "Overhead",
+        "scalability": "Skalierbarkeit",
+    },
+    "French": {
+        "entanglement": "intrication",
+        "coherence": "cohérence",
+        "spacetime": "espace-temps",
+        "qubit": "qubit",
+    },
+    "Spanish": {
+        "entanglement": "entrelazamiento",
+        "coherence": "coherencia",
+        "spacetime": "espacio-tiempo",
+        "qubit": "qubit",
+    },
+}
+
+
+def get_glossary_for_language(target_language: str) -> str:
+    """Get glossary section for the target language."""
+    glossary = SCIENTIFIC_GLOSSARY.get(target_language, {})
+    if not glossary:
+        return ""
+    
+    lines = ["MANDATORY SCIENTIFIC TERMINOLOGY (use EXACTLY these translations):"]
+    for eng, trans in glossary.items():
+        lines.append(f"  - {eng} → {trans}")
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -157,24 +238,11 @@ def restore_formulas(text: str, formula_map: Dict[str, str]) -> Tuple[str, int, 
 # =============================================================================
 
 def count_sentences(text: str) -> int:
-    """Count sentences in text. Critical for completeness validation."""
-    # Remove placeholders temporarily
+    """Count sentences in text."""
     clean = re.sub(r'⟦F_[a-f0-9]+⟧', '', text)
-    
-    # Split by sentence-ending punctuation
     sentences = re.split(r'[.!?]+(?:\s|$)', clean)
-    
-    # Filter empty
     sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
-    
     return len(sentences)
-
-
-def get_sentence_boundaries(text: str) -> List[str]:
-    """Extract individual sentences for comparison."""
-    clean = re.sub(r'⟦F_[a-f0-9]+⟧', ' [FORMULA] ', text)
-    sentences = re.split(r'(?<=[.!?])\s+', clean)
-    return [s.strip() for s in sentences if s.strip() and len(s.strip()) > 5]
 
 
 # =============================================================================
@@ -186,11 +254,7 @@ def validate_translation_strict(
     translated: str,
     expected_placeholders: List[str]
 ) -> ValidationResult:
-    """
-    STRICT validation of translation quality.
-    Pass 1 MUST be perfect - this ensures it.
-    """
-    # Check empty
+    """STRICT validation of translation quality."""
     if not translated or not translated.strip():
         return ValidationResult(
             valid=False, reason="Empty translation",
@@ -199,7 +263,6 @@ def validate_translation_strict(
             length_ratio=0
         )
     
-    # Length ratio check
     orig_len = len(original.strip())
     trans_len = len(translated.strip())
     ratio = trans_len / orig_len if orig_len > 0 else 0
@@ -222,7 +285,6 @@ def validate_translation_strict(
             length_ratio=ratio
         )
     
-    # Sentence count check - CRITICAL
     orig_sentences = count_sentences(original)
     trans_sentences = count_sentences(translated)
     
@@ -240,14 +302,13 @@ def validate_translation_strict(
         if sentence_ratio > MAX_SENTENCE_RATIO:
             return ValidationResult(
                 valid=False,
-                reason=f"Too many sentences: {trans_sentences}/{orig_sentences} - possible garbage",
+                reason=f"Too many sentences: {trans_sentences}/{orig_sentences}",
                 original_sentences=orig_sentences,
                 translated_sentences=trans_sentences,
                 placeholders_found=0, placeholders_expected=len(expected_placeholders),
                 length_ratio=ratio
             )
     
-    # Placeholder check - ALL must survive
     placeholders_found = sum(1 for p in expected_placeholders if p in translated)
     if placeholders_found < len(expected_placeholders):
         missing = len(expected_placeholders) - placeholders_found
@@ -261,7 +322,6 @@ def validate_translation_strict(
             length_ratio=ratio
         )
     
-    # Check for LLM failure patterns
     failure_patterns = [
         r'^(I\'m sorry|I cannot|I apologize|As an AI)',
         r'^(Here is|Here\'s|Below is|The following)',
@@ -275,7 +335,7 @@ def validate_translation_strict(
         if re.match(pattern, first_line, re.IGNORECASE):
             return ValidationResult(
                 valid=False,
-                reason=f"LLM meta-response detected: {first_line[:40]}...",
+                reason=f"LLM meta-response: {first_line[:40]}...",
                 original_sentences=orig_sentences,
                 translated_sentences=trans_sentences,
                 placeholders_found=placeholders_found,
@@ -283,7 +343,6 @@ def validate_translation_strict(
                 length_ratio=ratio
             )
     
-    # All checks passed
     return ValidationResult(
         valid=True, reason="OK",
         original_sentences=orig_sentences,
@@ -295,7 +354,7 @@ def validate_translation_strict(
 
 
 # =============================================================================
-# ESCALATING PROMPTS - GET STRICTER ON EACH RETRY
+# ESCALATING PROMPTS WITH SCIENTIFIC GLOSSARY
 # =============================================================================
 
 def build_translation_prompt(
@@ -305,12 +364,10 @@ def build_translation_prompt(
     previous_issue: str = "",
     context: str = ""
 ) -> Tuple[str, str]:
-    """
-    Build translation prompt that escalates in strictness.
-    Returns (system_prompt, user_prompt)
-    """
+    """Build translation prompt with scientific glossary."""
     
-    # Base rules that always apply
+    glossary = get_glossary_for_language(target_language)
+    
     base_rules = f"""TARGET LANGUAGE: {target_language}
 
 ABSOLUTE RULES:
@@ -318,30 +375,29 @@ ABSOLUTE RULES:
 2. Translate EVERY sentence completely - no omissions
 3. Keep all ⟦F_...⟧ placeholders EXACTLY unchanged
 4. Keep mathematical notation unchanged
-5. Keep author names, citations unchanged
-6. Preserve paragraph structure"""
+5. Keep author names, citations, URLs unchanged
+6. Preserve paragraph structure
+
+{glossary}"""
 
     if attempt == 0:
-        # First attempt - standard prompt
-        system = f"""You are a professional scientific translator.
+        system = f"""You are a professional scientific translator specializing in physics and quantum mechanics.
 
 {base_rules}
 
-Translate accurately and completely."""
+Translate accurately using correct scientific terminology."""
 
     elif attempt == 1:
-        # Second attempt - emphasize completeness
         system = f"""You are a professional scientific translator.
 
 {base_rules}
 
-IMPORTANT: The previous translation was incomplete.
+IMPORTANT: Previous translation was incomplete.
 Issue: {previous_issue}
 
-You MUST translate EVERY sentence. Do not skip or summarize ANY content."""
+You MUST translate EVERY sentence using correct scientific terminology."""
 
     elif attempt == 2:
-        # Third attempt - very strict
         system = f"""You are a professional scientific translator. This is attempt 3.
 
 {base_rules}
@@ -350,14 +406,13 @@ CRITICAL ERRORS IN PREVIOUS ATTEMPTS:
 - {previous_issue}
 
 REQUIREMENTS:
-- Count sentences in original: translate ALL of them
+- Translate ALL sentences
+- Use EXACT terminology from glossary
 - Every ⟦F_...⟧ must appear in output
-- No explanations, no meta-text
-- Just the pure {target_language} translation"""
+- No meta-text, just the translation"""
 
     elif attempt >= 3:
-        # Fourth+ attempt - maximum strictness
-        system = f"""CRITICAL: This is attempt {attempt + 1}. Previous attempts FAILED validation.
+        system = f"""CRITICAL: Attempt {attempt + 1}. Previous attempts FAILED.
 
 {base_rules}
 
@@ -365,14 +420,12 @@ FAILURE REASON: {previous_issue}
 
 YOU MUST:
 1. Translate WORD BY WORD if necessary
-2. Output EVERY sentence - check twice
-3. Include ALL ⟦F_...⟧ placeholders exactly
-4. Output ONLY {target_language} text
-5. NO preamble, NO explanations, NO "Here is..."
+2. Use EXACT terms from glossary (entanglement = Verschränkung, etc.)
+3. Output EVERY sentence
+4. Include ALL ⟦F_...⟧ placeholders
+5. Output ONLY {target_language} text
+6. NO preamble, NO explanations"""
 
-If you fail again, the text will be left untranslated."""
-
-    # Add context if available
     if context:
         system += f"\n\nPREVIOUS CONTEXT:\n{context[:300]}..."
 
@@ -391,13 +444,9 @@ def translate_chunk_perfect(
     target_language: str,
     context: str = ""
 ) -> Tuple[str, bool, str]:
-    """
-    Translate a single chunk with PERFECT validation.
-    Returns (translated_text, success, final_issue)
-    """
+    """Translate a single chunk with PERFECT validation."""
     import requests
     
-    # Isolate formulas first
     protected_text, formula_map = isolate_formulas(text)
     expected_placeholders = list(formula_map.keys())
     
@@ -421,7 +470,7 @@ def translate_chunk_perfect(
                     ],
                     "stream": False,
                     "options": {
-                        "temperature": 0.1 + (attempt * 0.05),  # Slightly increase temp on retries
+                        "temperature": 0.1 + (attempt * 0.05),
                         "num_predict": 8192,
                         "top_p": 0.95,
                     },
@@ -437,16 +486,13 @@ def translate_chunk_perfect(
             result = response.json().get("message", {}).get("content", "")
             result = clean_translation_output(result)
             
-            # Validate strictly
             validation = validate_translation_strict(protected_text, result, expected_placeholders)
             
-            # Track best result even if not perfect
             if best_validation is None or validation.length_ratio > best_validation.length_ratio:
                 best_result = result
                 best_validation = validation
             
             if validation.valid:
-                # Restore formulas and return
                 final_text, _, _ = restore_formulas(result, formula_map)
                 logger.info(f"Chunk validated on attempt {attempt + 1}: {validation.translated_sentences}/{validation.original_sentences} sentences")
                 return final_text, True, ""
@@ -463,13 +509,11 @@ def translate_chunk_perfect(
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY_BASE ** attempt)
     
-    # All retries exhausted - use best result or original
     if best_result and best_validation and best_validation.length_ratio >= 0.5:
         final_text, _, _ = restore_formulas(best_result, formula_map)
         logger.warning(f"Using best attempt despite validation failure: {last_issue}")
         return final_text, False, last_issue
     
-    # Complete failure - return original
     logger.error(f"Translation failed completely - using original text")
     return text, False, f"All {MAX_RETRIES} attempts failed: {last_issue}"
 
@@ -478,13 +522,10 @@ def clean_translation_output(text: str) -> str:
     """Remove LLM artifacts from translation."""
     lines = text.strip().split('\n')
     
-    # Remove common preamble lines
     while lines and re.match(r'^(Here|Below|The following|Translation|Übersetzung)', lines[0], re.I):
         lines = lines[1:]
     
     result = '\n'.join(lines).strip()
-    
-    # Remove markdown code blocks
     result = re.sub(r'^```\w*\n?', '', result)
     result = re.sub(r'\n?```$', '', result)
     
@@ -510,7 +551,6 @@ def chunk_text_smart(text: str, max_chars: int = MAX_CHUNK_CHARS) -> List[str]:
                 chunks.append(current_chunk.strip())
             
             if len(para) > max_chars:
-                # Split long paragraph by sentences
                 sentences = re.split(r'(?<=[.!?])\s+', para)
                 current_chunk = ""
                 for sent in sentences:
@@ -635,11 +675,7 @@ def translate_text_perfect(
     target_language: str,
     progress_callback: Optional[Callable] = None
 ) -> Tuple[str, int, int]:
-    """
-    Translate text with PERFECT quality.
-    Each chunk must pass validation before proceeding.
-    Returns (translated_text, total_chunks, failed_chunks)
-    """
+    """Translate text with PERFECT quality."""
     chunks = chunk_text_smart(text)
     translated_chunks = []
     failed_chunks = 0
@@ -730,10 +766,7 @@ def translate_pdf_perfect(
     target_language: str,
     progress_callback: Optional[Callable] = None,
 ) -> TranslationResult:
-    """
-    PERFECT translation pipeline.
-    Pass 1 must be perfect - strict validation on every chunk.
-    """
+    """PERFECT translation pipeline with scientific glossary."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -768,7 +801,6 @@ def translate_pdf_perfect(
             if progress_callback:
                 progress_callback(page_progress, 100, f"Page {page_num + 1}/{total_pages}")
             
-            # Extract single page
             doc = fitz.open(input_pdf)
             page_pdf = pages_dir / f"page_{page_num + 1:03d}.pdf"
             single_doc = fitz.open()
@@ -777,7 +809,6 @@ def translate_pdf_perfect(
             single_doc.close()
             doc.close()
             
-            # Extract text
             marker_dir = output_dir / "marker" / f"page_{page_num + 1}"
             marker_dir.mkdir(parents=True, exist_ok=True)
             
@@ -793,11 +824,9 @@ def translate_pdf_perfect(
             
             result.total_original_chars += len(full_text)
             
-            # Count formulas
             _, formulas = isolate_formulas(full_text)
             result.formula_count += len(formulas)
             
-            # Page data
             page_doc = fitz.open(str(page_pdf))
             page_data = PageData(
                 page_num=page_num + 1,
@@ -807,7 +836,6 @@ def translate_pdf_perfect(
             )
             page_doc.close()
             
-            # Translate with PERFECT validation
             def page_cb(current, total, msg):
                 if progress_callback:
                     sub = page_progress + int(90 / total_pages * current / max(total, 1))
@@ -820,11 +848,9 @@ def translate_pdf_perfect(
             total_failed_chunks += failed
             result.total_translated_chars += len(translated_text)
             
-            # Count preserved formulas
             _, remaining = isolate_formulas(translated_text)
             result.formulas_preserved += len(remaining)
             
-            # Create PDF
             translated_page = output_dir / "translated" / f"page_{page_num + 1:03d}.pdf"
             translated_page.parent.mkdir(exist_ok=True)
             
@@ -832,7 +858,6 @@ def translate_pdf_perfect(
                 translated_pages.append(translated_page)
                 result.pages_processed += 1
         
-        # Merge pages
         if progress_callback:
             progress_callback(96, 100, "Merging pages...")
         
@@ -848,7 +873,6 @@ def translate_pdf_perfect(
         merged_doc.save(str(output_pdf))
         merged_doc.close()
         
-        # Final validation
         if total_failed_chunks > 0:
             result.warnings.append(f"{total_failed_chunks} chunks had validation issues")
             result.validation_passed = False
@@ -905,7 +929,10 @@ if __name__ == "__main__":
     print(f"Translated: {result.total_translated_chars:,} chars")
     print(f"Ratio: {result.translation_ratio:.1%}")
     print(f"Formulas: {result.formulas_preserved}/{result.formula_count}")
-    print(f"Validation: {'✅ PERFECT' if result.validation_passed else '⚠️ WARNINGS'}")
+    if result.validation_passed:
+        print("Validation: PERFECT")
+    else:
+        print("Validation: WARNINGS")
     if result.warnings:
         print(f"Warnings: {result.warnings}")
     if result.output_path:
