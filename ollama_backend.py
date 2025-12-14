@@ -99,6 +99,14 @@ OLLAMA_MODELS: Dict[str, Dict[str, Any]] = {
         "description": "Qwen 2.5 3B - Lightweight, good quality",
         "quality": "good",
     },
+    "gemma2:2b": {
+        "vram_min": 2,
+        "vram_recommended": 4,
+        "size_gb": 1.6,
+        "context_length": 8192,
+        "description": "Google Gemma 2 2B - Very fast, 8K context",
+        "quality": "basic",
+    },
     # ============================================================
     # 8 GB VRAM
     # ============================================================
@@ -117,14 +125,6 @@ OLLAMA_MODELS: Dict[str, Dict[str, Any]] = {
         "context_length": 128000,  # 128K context
         "description": "Microsoft Phi-3 Mini - 128K context",
         "quality": "good",
-    },
-    "gemma2:2b": {
-        "vram_min": 4,
-        "vram_recommended": 8,
-        "size_gb": 1.6,
-        "context_length": 8192,  # 8K context
-        "description": "Google Gemma 2 2B - Very fast, 8K context",
-        "quality": "basic",
     },
     "mistral:7b-instruct-q4_0": {
         "vram_min": 4,
@@ -201,6 +201,14 @@ OLLAMA_MODELS: Dict[str, Dict[str, Any]] = {
         "description": "Intel Neural Chat 7B - 8K context",
         "quality": "very good",
     },
+    "deepseek-coder-v2:16b": {
+        "vram_min": 10,
+        "vram_recommended": 16,
+        "size_gb": 9.0,
+        "context_length": 131072,  # 128K context
+        "description": "DeepSeek Coder V2 16B - Code & Technical",
+        "quality": "excellent",
+    },
     # ============================================================
     # 24 GB VRAM
     # ============================================================
@@ -260,241 +268,69 @@ OLLAMA_MODELS: Dict[str, Dict[str, Any]] = {
         "vram_recommended": 32,
         "size_gb": 19,
         "context_length": 131072,  # 128K context
-        "description": "Qwen 2.5 32B - 128K context, multilingual",
+        "description": "Qwen 2.5 32B - 128K, top multilingual",
         "quality": "excellent",
     },
     "command-r:35b": {
-        "vram_min": 22,
+        "vram_min": 24,
         "vram_recommended": 32,
         "size_gb": 20,
-        "context_length": 131072,  # 128K context
-        "description": "Command-R 35B - 128K context",
+        "context_length": 131072,
+        "description": "Command R 35B - Cohere, 128K context",
         "quality": "excellent",
     },
     # ============================================================
     # 48 GB VRAM
     # ============================================================
-    "mixtral:8x22b": {
-        "vram_min": 32,
-        "vram_recommended": 48,
-        "size_gb": 80,
-        "context_length": 65536,  # 64K context
-        "description": "Mixtral 8x22B - 64K context, largest MoE",
-        "quality": "premium",
-    },
-    "mistral-large:123b-q4_0": {
-        "vram_min": 40,
-        "vram_recommended": 48,
-        "size_gb": 70,
-        "context_length": 131072,  # 128K context
-        "description": "Mistral Large 123B Q4 - 128K context",
-        "quality": "premium",
-    },
-    # ============================================================
-    # 64 GB VRAM
-    # ============================================================
     "llama3.1:70b": {
         "vram_min": 40,
-        "vram_recommended": 64,
+        "vram_recommended": 48,
         "size_gb": 40,
         "context_length": 131072,  # 128K context
-        "description": "Llama 3.1 70B - 128K context, top quality",
+        "description": "Llama 3.1 70B - 128K context, premium",
         "quality": "premium",
     },
     "qwen2.5:72b": {
-        "vram_min": 45,
-        "vram_recommended": 64,
+        "vram_min": 44,
+        "vram_recommended": 48,
         "size_gb": 43,
         "context_length": 131072,  # 128K context
-        "description": "Qwen 2.5 72B - 128K context, best translations",
+        "description": "Qwen 2.5 72B - 128K, state-of-the-art",
         "quality": "premium",
     },
-    "command-r-plus:104b": {
-        "vram_min": 55,
+    "gpt-oss:120b": {
+        "vram_min": 48,
         "vram_recommended": 64,
-        "size_gb": 60,
-        "context_length": 131072,  # 128K context
-        "description": "Command-R+ 104B - 128K context, enterprise",
+        "size_gb": 70,
+        "context_length": 65536,
+        "description": "GPT-OSS 120B - Very strong, requires 64GB+",
         "quality": "premium",
     },
     # ============================================================
-    # 96 GB VRAM
+    # 64+ GB VRAM (Multi-GPU / Enterprise)
     # ============================================================
-    "llama3.1:405b-instruct-q4_0": {
-        "vram_min": 80,
-        "vram_recommended": 96,
-        "size_gb": 230,
-        "context_length": 131072,  # 128K context
-        "description": "Llama 3.1 405B Q4 - 128K context, largest",
+    "deepseek-v2.5": {
+        "vram_min": 64,
+        "vram_recommended": 128,
+        "size_gb": 130,
+        "context_length": 131072,
+        "description": "DeepSeek V2.5 236B - Multi-GPU required",
         "quality": "maximum",
     },
-    "mistral-large:123b": {
-        "vram_min": 80,
-        "vram_recommended": 96,
-        "size_gb": 70,
-        "context_length": 131072,  # 128K context
-        "description": "Mistral Large 123B - 128K context, flagship",
+    "deepseek-v3": {
+        "vram_min": 200,
+        "vram_recommended": 400,
+        "size_gb": 400,
+        "context_length": 131072,
+        "description": "DeepSeek V3 671B - Enterprise only",
         "quality": "maximum",
     },
 }
 
 
 # =============================================================================
-# OLLAMA UTILITY FUNCTIONS
+# MODEL HELPER FUNCTIONS
 # =============================================================================
-
-def check_ollama_installed() -> bool:
-    """Check if Ollama is running and accessible."""
-    try:
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-
-def get_installed_models() -> List[str]:
-    """Returns list of installed Ollama models."""
-    try:
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            models = [m["name"] for m in data.get("models", [])]
-            return models
-    except Exception as e:
-        logger.warning("Could not get installed models: %s", e)
-    return []
-
-
-def is_model_installed(model_name: str) -> bool:
-    """Check if a specific model is installed."""
-    installed = get_installed_models()
-    # Check exact match or base name match
-    base_name = model_name.split(":")[0]
-    return any(
-        m == model_name or m.startswith(base_name + ":")
-        for m in installed
-    )
-
-
-def pull_model(model_name: str, progress_callback=None) -> bool:
-    """
-    Pull/download an Ollama model.
-    
-    Args:
-        model_name: Name of the model to pull
-        progress_callback: Optional callback(status, percent)
-    
-    Returns:
-        True if successful
-    """
-    try:
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/pull",
-            json={"name": model_name},
-            stream=True,
-            timeout=3600  # 1 hour timeout for large models
-        )
-        
-        if response.status_code != 200:
-            return False
-        
-        for line in response.iter_lines():
-            if line:
-                import json
-                data = json.loads(line)
-                status = data.get("status", "")
-                
-                # Parse progress
-                if "completed" in data and "total" in data:
-                    completed = data["completed"]
-                    total = data["total"]
-                    if total > 0:
-                        percent = int(100 * completed / total)
-                        if progress_callback:
-                            progress_callback(status, percent)
-                elif progress_callback:
-                    progress_callback(status, 0)
-        
-        return True
-    except Exception as e:
-        logger.exception("Error pulling model: %s", e)
-        return False
-
-
-def get_models_for_vram(vram_gb: int) -> List[Dict]:
-    """Returns models that fit in the given VRAM."""
-    fitting = []
-    for name, info in OLLAMA_MODELS.items():
-        if info["vram_min"] <= vram_gb:
-            fitting.append({
-                "name": name,
-                "size_gb": info["size_gb"],
-                "description": info["description"],
-                "fits_comfortably": info["vram_recommended"] <= vram_gb,
-                "context_length": info.get("context_length", DEFAULT_CONTEXT_LENGTH),
-            })
-    return sorted(fitting, key=lambda x: x["size_gb"])
-
-
-def get_models_for_vram_with_installed(vram_gb: int) -> List[Dict]:
-    """Returns models for VRAM, marking which are installed."""
-    models = get_models_for_vram(vram_gb)
-    installed = get_installed_models()
-    
-    for model in models:
-        base_name = model["name"].split(":")[0]
-        model["installed"] = any(
-            m == model["name"] or m.startswith(base_name + ":")
-            for m in installed
-        )
-    
-    return models
-
-
-def detect_gpu_vram() -> Optional[int]:
-    """
-    Detects available GPU VRAM in GB.
-    
-    Returns:
-        VRAM in GB or None if no GPU detected
-    """
-    # Try nvidia-smi first (NVIDIA GPUs)
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0:
-            # Get first GPU's memory in MB, convert to GB
-            memory_mb = int(result.stdout.strip().split("\n")[0])
-            vram_gb = memory_mb // 1024
-            logger.info("Detected NVIDIA GPU with %d GB VRAM", vram_gb)
-            return vram_gb
-    except Exception:
-        pass
-    
-    # Try PyTorch for broader GPU support
-    try:
-        import torch
-        if torch.cuda.is_available():
-            vram_bytes = torch.cuda.get_device_properties(0).total_memory
-            vram_gb = vram_bytes // (1024 ** 3)
-            logger.info("Detected GPU via PyTorch with %d GB VRAM", vram_gb)
-            return vram_gb
-    except Exception:
-        pass
-    
-    logger.warning("No GPU detected")
-    return None
-
-
-def get_max_vram_for_system() -> int:
-    """Returns maximum VRAM available, or 8 GB default."""
-    detected = detect_gpu_vram()
-    return detected if detected else 8
-
 
 def get_model_context_length(model_name: str) -> int:
     """Returns the context length for a model."""
@@ -510,80 +346,183 @@ def get_model_context_length(model_name: str) -> int:
     return DEFAULT_CONTEXT_LENGTH
 
 
+def get_models_for_vram(vram_gb: int) -> List[Dict[str, Any]]:
+    """Returns models that fit in given VRAM, sorted by quality."""
+    models = []
+    
+    for name, info in OLLAMA_MODELS.items():
+        if info["vram_min"] <= vram_gb:
+            models.append({
+                "name": name,
+                "size_gb": info["size_gb"],
+                "context_length": info.get("context_length", DEFAULT_CONTEXT_LENGTH),
+                "description": info["description"],
+                "quality": info.get("quality", "good"),
+                "fits_comfortably": info["vram_recommended"] <= vram_gb,
+            })
+    
+    # Sort: comfortable fit first, then by quality
+    quality_order = {"maximum": 0, "premium": 1, "excellent": 2, "very good": 3, "good": 4, "basic": 5}
+    models.sort(key=lambda m: (0 if m["fits_comfortably"] else 1, quality_order.get(m["quality"], 5)))
+    
+    return models
+
+
+def get_models_for_vram_with_installed(vram_gb: int) -> List[Dict[str, Any]]:
+    """Returns models for VRAM, with installed status."""
+    models = get_models_for_vram(vram_gb)
+    installed = get_installed_models()
+    
+    for model in models:
+        model["installed"] = model["name"] in installed
+    
+    return models
+
+
+# =============================================================================
+# OLLAMA API FUNCTIONS
+# =============================================================================
+
+def check_ollama_installed() -> bool:
+    """Check if Ollama is installed and running."""
+    try:
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        return response.status_code == 200
+    except:
+        return False
+
+
+def get_installed_models() -> List[str]:
+    """Get list of installed Ollama models."""
+    try:
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return [m["name"] for m in data.get("models", [])]
+    except:
+        pass
+    return []
+
+
+def is_model_installed(model_name: str) -> bool:
+    """Check if a specific model is installed."""
+    installed = get_installed_models()
+    return model_name in installed or model_name.split(":")[0] in [m.split(":")[0] for m in installed]
+
+
+def pull_model(model_name: str) -> Tuple[bool, str]:
+    """Pull/download a model from Ollama."""
+    try:
+        # Use subprocess for real-time output
+        process = subprocess.Popen(
+            ["ollama", "pull", model_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        
+        output_lines = []
+        for line in process.stdout:
+            output_lines.append(line.strip())
+        
+        process.wait()
+        
+        if process.returncode == 0:
+            return True, f"✅ Model {model_name} downloaded successfully"
+        else:
+            return False, f"❌ Failed to download {model_name}: {' '.join(output_lines[-3:])}"
+    except FileNotFoundError:
+        return False, "❌ Ollama not installed. Please install from https://ollama.ai"
+    except Exception as e:
+        return False, f"❌ Error: {str(e)}"
+
+
+def detect_gpu_vram() -> Optional[int]:
+    """Detect GPU VRAM in GB."""
+    try:
+        # Try nvidia-smi first
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            vram_mb = int(result.stdout.strip().split("\n")[0])
+            return vram_mb // 1024
+    except:
+        pass
+    
+    # Try PyTorch
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram_bytes = torch.cuda.get_device_properties(0).total_memory
+            return int(vram_bytes / (1024**3))
+    except:
+        pass
+    
+    return None
+
+
+def get_max_vram_for_system() -> int:
+    """Get maximum VRAM available on system."""
+    detected = detect_gpu_vram()
+    return detected if detected else 8  # Default to 8GB
+
+
+# =============================================================================
+# TOKEN/PAGE ESTIMATION
+# =============================================================================
+
 def get_token_limit_for_model(model_name: str, vram_gb: Optional[int] = None) -> int:
-    """
-    Returns optimal token limit based on model and available VRAM.
+    """Returns safe token limit for a model given VRAM constraints."""
+    context = get_model_context_length(model_name)
     
-    Considers both the model's native context window and VRAM constraints.
-    """
-    if vram_gb is None:
-        vram_gb = detect_gpu_vram() or 8
+    # Leave headroom for response
+    safe_limit = int(context * 0.8)
     
-    # Get model's native context length
-    model_context = get_model_context_length(model_name)
+    # Cap based on VRAM if provided
+    if vram_gb:
+        vram_cap = vram_gb * 2000  # Rough estimate: 2K tokens per GB
+        safe_limit = min(safe_limit, vram_cap)
     
-    # VRAM-based limits (conservative to avoid OOM)
+    return max(safe_limit, 4096)  # Minimum 4K
+
+
+def get_token_limit_for_vram(vram_gb: int) -> int:
+    """Returns recommended token limit based on VRAM."""
+    # Conservative estimates
     VRAM_TOKEN_MAP = {
-        4:  4096,
-        6:  8192,
-        8:  16384,
-        12: 32768,
-        16: 65536,
-        24: 98304,
+        4: 4096,
+        6: 6144,
+        8: 8192,
+        12: 16384,
+        16: 32768,
+        24: 65536,
         32: 131072,
         48: 131072,
         64: 131072,
         96: 131072,
     }
     
-    vram_limit = 4096
+    best_limit = 4096
     for vram_threshold, tokens in sorted(VRAM_TOKEN_MAP.items()):
         if vram_gb >= vram_threshold:
-            vram_limit = tokens
+            best_limit = tokens
     
-    # Use minimum of model context and VRAM limit
-    token_limit = min(model_context, vram_limit)
-    
-    logger.info("Model %s: context=%d, VRAM %dGB limit=%d → using %d tokens", 
-                model_name, model_context, vram_gb, vram_limit, token_limit)
-    return token_limit
-
-
-def get_token_limit_for_vram(vram_gb: Optional[int] = None) -> int:
-    """Returns optimal token limit based on available VRAM only."""
-    if vram_gb is None:
-        vram_gb = detect_gpu_vram() or 8
-    
-    VRAM_TOKEN_MAP = {
-        4:  4096,
-        6:  8192,
-        8:  16384,
-        12: 32768,
-        16: 65536,
-        24: 98304,
-        32: 131072,
-        48: 131072,
-        64: 131072,
-        96: 131072,
-    }
-    
-    best_tokens = 4096
-    for vram_threshold, tokens in sorted(VRAM_TOKEN_MAP.items()):
-        if vram_gb >= vram_threshold:
-            best_tokens = tokens
-    
-    return best_tokens
+    return best_limit
 
 
 def get_page_estimate_for_model(model_name: str, vram_gb: Optional[int] = None) -> int:
-    """Returns estimated pages based on model's context window and VRAM."""
-    token_limit = get_token_limit_for_model(model_name, vram_gb)
-    pages = token_limit // 500  # ~500 tokens per page
-    return max(pages, 1)
+    """Estimate how many pages can be processed consistently."""
+    tokens = get_token_limit_for_model(model_name, vram_gb)
+    # ~500 tokens per page of scientific text
+    return max(1, tokens // 500)
 
 
-def get_page_estimate_for_vram(vram_gb: Optional[int] = None) -> int:
-    """Returns estimated pages based on VRAM only."""
+def get_page_estimate_for_vram(vram_gb: int) -> int:
+    """Estimate pages based on VRAM only."""
     if vram_gb is None:
         vram_gb = detect_gpu_vram() or 8
     
@@ -858,18 +797,23 @@ def get_vram_recommendations() -> str:
 
 | VRAM | Model | Size | Description |
 |------|-------|------|-------------|
+| **4 GB** | `gemma2:2b` | 1.6 GB | Fast, basic quality |
+| | `qwen2.5:3b` | 1.9 GB | Better quality |
 | **8 GB** | `llama3.2:3b` | 2 GB | Fast, good baseline |
 | | `mistral:7b-instruct-q4_0` | 4.1 GB | Mistral compressed |
 | | `phi3:mini` | 2.3 GB | Microsoft, efficient |
 | **16 GB** | `llama3.1:8b` ⭐ | 4.7 GB | **Recommended!** Balanced |
 | | `mistral:7b` | 4.1 GB | Excellent for translations |
 | | `qwen2.5:7b` | 4.7 GB | Best for translations |
-| | `openchat:7b` | 4.1 GB | ChatGPT alternative |
+| | `deepseek-coder-v2:16b` | 9 GB | Technical & Code |
 | **24 GB** | `mistral-small:22b` | 13 GB | Official Mistral Small |
-| | `codestral:22b` | 13 GB | Mistral for Code & Text |
+| | `qwen2.5:14b` | 9 GB | Multilingual |
 | | `gpt-oss:20b` | 12 GB | GPT-OSS 20B |
 | **32 GB** | `mixtral:8x7b` | 26 GB | Mistral MoE, very strong |
 | | `qwen2.5:32b` | 19 GB | Top for multilingual |
 | **48+ GB** | `llama3.1:70b` | 40 GB | Premium quality |
 | | `qwen2.5:72b` | 43 GB | State-of-the-art |
+| | `gpt-oss:120b` | 70 GB | Requires 64GB+ |
+| **128+ GB** | `deepseek-v2.5` | 130 GB | DeepSeek 236B |
+| **400+ GB** | `deepseek-v3` | 400 GB | DeepSeek V3 671B |
 """
