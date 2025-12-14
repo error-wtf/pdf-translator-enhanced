@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .jobs import (
+from jobs import (
     BASE_DIR,
     DATA_DIR,
     JOBS_DIR,
@@ -16,7 +16,7 @@ from .jobs import (
     get_job,
     start_job_thread,
 )
-from .models import JobInfo
+from models import JobInfo
 
 logger = logging.getLogger("pdf_translator.main")
 if not logging.getLogger().hasHandlers():
@@ -27,7 +27,7 @@ app = FastAPI(title="PDF Translator")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # SECURITY: Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -37,22 +37,28 @@ class UploadResponse(BaseModel):
     job: JobInfo
 
 
+MAX_PDF_SIZE = 50 * 1024 * 1024  # SECURITY: 50 MB limit
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_pdf(
     pdf: UploadFile = File(...),
     target_language: str = Form("de"),
     use_openai: bool = Form(False),
     openai_api_key: Optional[str] = Form(None),
+    use_ollama: bool = Form(False),
+    ollama_model: Optional[str] = Form(None),
 ):
     if not pdf.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     logger.info(
-        "Upload received: filename=%s, target_language=%s, use_openai=%s, api_key_provided=%s",
+        "Upload received: filename=%s, target_language=%s, use_openai=%s, api_key_provided=%s, use_ollama=%s, ollama_model=%s",
         pdf.filename,
         target_language,
         use_openai,
         bool(openai_api_key),
+        use_ollama,
+        ollama_model,
     )
 
     job = create_job(
@@ -66,6 +72,11 @@ async def upload_pdf(
 
     pdf_path = job_dir / "original.pdf"
     contents = await pdf.read()
+    
+    # SECURITY: Check file size limit
+    if len(contents) > MAX_PDF_SIZE:
+        raise HTTPException(status_code=413, detail="PDF too large (max 50MB)")
+    
     pdf_path.write_bytes(contents)
     logger.info("Original PDF for job %s written to %s", job.job_id, pdf_path)
 
@@ -75,6 +86,8 @@ async def upload_pdf(
         target_language=target_language,
         use_openai=use_openai,
         openai_api_key=openai_api_key,
+        use_ollama=use_ollama,
+        ollama_model=ollama_model,
     )
 
     return UploadResponse(job=job)
@@ -82,6 +95,13 @@ async def upload_pdf(
 
 @app.get("/job/{job_id}", response_model=JobInfo)
 async def job_status(job_id: str):
+    # SECURITY: Validate job_id format (UUID)
+    try:
+        from uuid import UUID
+        UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+    
     try:
         return get_job(job_id)
     except KeyError:
@@ -90,6 +110,19 @@ async def job_status(job_id: str):
 
 @app.get("/job/{job_id}/pdf")
 async def download_result(job_id: str):
+    # SECURITY: Validate job_id format (UUID) to prevent path traversal
+    try:
+        from uuid import UUID
+        UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+    
+    # SECURITY: Verify job exists in registry before file access
+    try:
+        get_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
     job_dir = JOBS_DIR / job_id
     pdf_path = job_dir / "main.pdf"
     if not pdf_path.exists():

@@ -388,7 +388,7 @@
           (data.status || "unbekannt") +
           "\n\nSobald die Verarbeitung fertig ist, kannst du den Download-Link verwenden.";
 
-        const downloadUrl = API_BASE + "/download/" + encodeURIComponent(data.job_id);
+        const downloadUrl = API_BASE + "/job/" + encodeURIComponent(data.job_id) + "/pdf";
         downloadEl.innerHTML =
           '<a href="' +
           downloadUrl +

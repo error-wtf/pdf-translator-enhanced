@@ -1,18 +1,62 @@
+"""
+LaTeX Build for PDF-Translator
+
+© 2025 Sven Kalinowski with small help of Lino Casu
+Licensed under the Anti-Capitalist Software License v1.4
+"""
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import List
 
-from .models import Block
+from models import Block
+import tempfile
 
 logger = logging.getLogger("pdf_translator.latex_build")
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-JOBS_DIR = DATA_DIR / "jobs"
+# Use system temp directory for Gradio compatibility
+JOBS_DIR = Path(tempfile.gettempdir()) / "pdf_translator_jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup_old_jobs(max_age_hours: int = 24):
+    """
+    Remove job directories older than max_age_hours.
+    Called periodically to prevent temp folder from growing indefinitely.
+    """
+    import time
+    from datetime import datetime
+    
+    if not JOBS_DIR.exists():
+        return
+    
+    now = time.time()
+    max_age_seconds = max_age_hours * 3600
+    deleted_count = 0
+    
+    try:
+        for job_dir in JOBS_DIR.iterdir():
+            if job_dir.is_dir():
+                # Check modification time
+                mtime = job_dir.stat().st_mtime
+                age = now - mtime
+                
+                if age > max_age_seconds:
+                    try:
+                        import shutil
+                        shutil.rmtree(job_dir)
+                        deleted_count += 1
+                        logger.debug(f"Deleted old job: {job_dir.name}")
+                    except Exception as e:
+                        logger.warning(f"Could not delete {job_dir}: {e}")
+        
+        if deleted_count > 0:
+            logger.info(f"Cleaned up {deleted_count} old job directories")
+    except Exception as e:
+        logger.warning(f"Cleanup failed: {e}")
 
 
 def sanitize_for_latex(text: str) -> str:
@@ -178,10 +222,34 @@ def build_and_compile(
 
     logger.info("[latex_build] main.tex written to %s", tex_path)
 
-    cmd = ["pdflatex", "-interaction=nonstopmode", "main.tex"]
+    # Try to find pdflatex - check common MiKTeX paths on Windows
+    pdflatex_cmd = "pdflatex"
+    if os.name == 'nt':  # Windows
+        miktex_paths = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe"),
+            os.path.expandvars(r"%PROGRAMFILES%\MiKTeX\miktex\bin\x64\pdflatex.exe"),
+            r"C:\MiKTeX\miktex\bin\x64\pdflatex.exe",
+        ]
+        for path in miktex_paths:
+            if os.path.exists(path):
+                pdflatex_cmd = path
+                logger.info("[latex_build] Found pdflatex at: %s", path)
+                break
+    
+    cmd = [pdflatex_cmd, "-interaction=nonstopmode", "main.tex"]
     try:
-        subprocess.run(cmd, cwd=job_dir, check=True)
+        subprocess.run(cmd, cwd=job_dir, check=True, timeout=300)  # SECURITY: 5 min timeout
         logger.info("[latex_build] pdflatex finished successfully for job %s", job_id)
+    except FileNotFoundError:
+        logger.error("[latex_build] ERROR: pdflatex not found! LaTeX is not installed.")
+        raise RuntimeError(
+            "pdflatex not found!\n\n"
+            "Please install LaTeX:\n"
+            "  Windows: winget install MiKTeX.MiKTeX\n"
+            "  Linux: sudo apt install texlive-latex-base\n"
+            "  macOS: brew install --cask basictex\n\n"
+            "After installation, restart the terminal/app!"
+        )
     except subprocess.CalledProcessError as exc:
         logger.error(
             "[latex_build] ERROR: pdflatex returned non-zero exit status for job %s: %s",

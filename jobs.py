@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional, List
 from uuid import uuid4
 
-from .models import JobInfo, JobStatus, Block
+from models import JobInfo, JobStatus, Block
 
 logger = logging.getLogger("pdf_translator.jobs")
 
@@ -96,18 +96,22 @@ def start_job_thread(
     target_language: str,
     use_openai: bool,
     openai_api_key: Optional[str],
+    use_ollama: bool = False,
+    ollama_model: Optional[str] = None,
 ) -> None:
     logger.info(
-        "Starting background thread for job %s (pdf=%s, target_language=%s, use_openai=%s, api_key_set=%s)",
+        "Starting background thread for job %s (pdf=%s, target_language=%s, use_openai=%s, api_key_set=%s, use_ollama=%s, ollama_model=%s)",
         job_id,
         pdf_path,
         target_language,
         use_openai,
         bool(openai_api_key),
+        use_ollama,
+        ollama_model,
     )
     thread = threading.Thread(
         target=run_job_in_background,
-        args=(job_id, pdf_path, target_language, use_openai, openai_api_key),
+        args=(job_id, pdf_path, target_language, use_openai, openai_api_key, use_ollama, ollama_model),
         daemon=True,
     )
     thread.start()
@@ -119,8 +123,11 @@ def run_job_in_background(
     target_language: str,
     use_openai: bool,
     openai_api_key: Optional[str],
+    use_ollama: bool = False,
+    ollama_model: Optional[str] = None,
 ) -> None:
-    from . import pdf_processing, latex_build
+    import pdf_processing
+    import latex_build
 
     logger.info("Job %s: background pipeline started", job_id)
 
@@ -156,6 +163,8 @@ def run_job_in_background(
             target_language=target_language,
             use_openai=use_openai,
             openai_api_key=openai_api_key,
+            use_ollama=use_ollama,
+            ollama_model=ollama_model,
         )
 
         num_blocks = len(blocks)

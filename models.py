@@ -1,4 +1,9 @@
-# app/models.py
+"""
+Data Models for PDF-Translator
+
+© 2025 Sven Kalinowski with small help of Lino Casu
+Licensed under the Anti-Capitalist Software License v1.4
+"""
 from __future__ import annotations
 
 from enum import Enum

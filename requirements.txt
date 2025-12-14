@@ -1,0 +1,34 @@
+# PDF Translator - Requirements
+# © 2025 Sven Kalinowski with small help of Lino Casu
+# Licensed under the Anti-Capitalist Software License v1.4
+
+# === Core Framework ===
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# === PDF Processing ===
+PyPDF2>=3.0.0
+pdfplumber>=0.11.0
+pymupdf>=1.24.0
+langdetect>=1.0.9
+
+# === Scientific PDF Processing (Marker) ===
+# Marker provides best-in-class formula extraction for scientific PDFs
+marker-pdf>=1.0.0
+huggingface_hub>=0.20.0
+
+# === LLM Backends ===
+openai>=1.3.0
+requests>=2.31.0
+
+# === Gradio Frontend ===
+gradio>=4.0.0
+
+# === Utilities ===
+python-multipart>=0.0.6
+
+# === Optional: For development ===
+# pytest>=7.4.0
+# black>=23.0.0
+# ruff>=0.1.0

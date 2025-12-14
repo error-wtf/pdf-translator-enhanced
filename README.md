@@ -1,70 +1,832 @@
-# pdf-translator
-english scientific PDF to LaTeX and back to PDF translator
+# 📄 PDF Translator (Enhanced Fork)
 
+**Translate scientific PDFs while preserving LaTeX formulas and document structure**
 
-## Automated Document Translation and Layout Preservation Framework for Scientific Literature
+> 🔗 **Based on:** [thelanguagenerd/pdf-translator](https://github.com/thelanguagenerd/pdf-translator)  
+> This is an enhanced fork with improved formula preservation, table detection, and multi-language support.
 
-### I. Introduction
+© 2025 Sven Kalinowski with small help of Lino Casu  
+Licensed under the **Anti-Capitalist Software License v1.4**
 
-This document details the architecture and methodology of an automated framework designed for the **robust translation of scientific documents** (specifically PDFs) while preserving their original structural and mathematical formatting. The core challenge addressed is the translation of complex, multi-modal content (text, equations, tables, figures) into a target language while generating a final document with a layout suitable for academic dissemination. The proposed solution employs an asynchronous **microservice architecture** utilizing Large Language Models (LLMs) for high-quality translation and the $\mathbf{\LaTeX}$ typesetting system for precise output reconstruction.
+---
 
-***
+## 🆕 What's New in This Fork
 
-### II. System Architecture and Methodology
+- **🔬 Unified Pipeline** - Combines Marker + PyMuPDF for best extraction quality
+- **📊 Table Detection** - Automatically detects and preserves table structure
+- **🖼️ Caption Anchoring** - Figures and captions stay together
+- **🧹 Text Normalization** - Removes garbage characters (￾, soft hyphens, etc.)
+- **📐 Enhanced Formula Protection** - 60+ LaTeX patterns protected during translation
+- **🌍 20 Languages** - Now includes Arabic, Hebrew, Ukrainian, Hindi, and more
+- **✅ Regression Tests** - Automated quality checks for translated PDFs
 
-The framework operates via a multi-stage pipeline, managed asynchronously to ensure system responsiveness. The process is orchestrated through a RESTful API and managed by dedicated job-handling modules.
+---
 
-#### A. Job Management and State Tracking
+## 🌟 Features
 
-The system utilizes an in-memory job registry (`jobs.py`) to manage the lifecycle of each translation request.
+- **🔒 100% Local Processing** - With Ollama, no data leaves your computer
+- **🧠 AI-Powered Translation** - Uses state-of-the-art LLMs (Llama, Mistral, GPT-4)
+- **📐 LaTeX Preservation** - Mathematical formulas remain intact
+- **🎨 Beautiful UI** - Modern Gradio interface with dark/light mode
+- **🔧 Auto GPU Detection** - Automatically detects your VRAM and suggests suitable models
+- **🌍 20 Languages** - English, German, French, Spanish, Italian, Japanese, Chinese, Arabic, Hebrew, Ukrainian, and more
 
-| Component | Function | Data Structure |
-| :--- | :--- | :--- |
-| **API Endpoint** (`/upload`) | Initiates the job, saves the original PDF, and starts an **asynchronous thread** (`start_job_thread`). | `JobInfo` (via `models.py`) |
-| **State Enumeration** | Tracks progress through defined states. | `JobStatus` (queued, analyzing, translating, latex\_build, done, error) |
-| **Status Update** | Provides granular progress and status messages to the client. | `progress` (0-100), `message` |
+---
 
-**Data Model:** The primary unit of content is the **Block** (`models.py`), defined by:
-* `page`: The page number of origin.
-* `content`: The extracted source text.
-* `translated_latex`: The translated and $\LaTeX$-ready text.
-* `element_type`: Categorizes the block for layout reconstruction (e.g., **text**, **figure\_caption**, **table\_content**, **image\_placeholder**).
-* `bbox`: Bounding Box (x0, y0, x1, y1) for layout-aware processing.
+## 📋 Table of Contents
 
-#### B. Structural Analysis (PDF Pre-processing)
+1. [Quick Start](#-quick-start)
+2. [System Requirements](#-system-requirements)
+3. [Detailed Installation](#-detailed-installation)
+4. [Running the Application](#-running-the-application)
+5. [Using the Application](#-using-the-application)
+6. [LLM Backend Options](#-llm-backend-options)
+7. [VRAM & Model Guide](#-vram--model-guide)
+8. [API Reference](#-api-reference)
+9. [Troubleshooting](#-troubleshooting)
+10. [Project Structure](#-project-structure)
+11. [Security](#-security)
+12. [License](#-license)
 
-The structural analysis (`pdf_processing.py`) is designed to decompose the source PDF into a sequence of meaningful `Block` objects, enabling targeted translation and preservation of document flow.
+---
 
-1.  **Text and Word Extraction:** The PDF is parsed (conceptually via a library like `pdfplumber` or `PDFMiner.six`) to extract text and associated **Bounding Boxes (BBox)** for each word.
-2.  **Block Aggregation:** Adjacent words are aggregated into `Block` objects based on heuristic tolerances, specifically **vertical gaps** ($> 1.5$ units) and minimal **horizontal displacement** ($\pm 10$ units) to maintain column and paragraph integrity.
-3.  **Element Classification:** Each generated block is assigned an `element_type` based on its content or contextual cues (e.g., detecting text blocks that reference figures to insert an `image_placeholder` block).
-4.  **Language Detection:** A lightweight language detection utility (`langdetect`) is applied to a text sample to determine the **source language** for the translation prompt.
+## 🚀 Quick Start
 
-#### C. Machine Translation
+### Windows (One-Click Install)
 
-The system utilizes an external LLM (specified as **OpenAI GPT-4.1**) acting as a **professional scientific translator**.
+1. **Download or clone this repository**
+2. **Double-click `install.bat`**
+3. **Wait for installation to complete** (5-10 minutes)
+4. **Double-click `run.bat`** to start the application
+5. **Open http://127.0.0.1:7860** in your browser
 
-1.  **Prompt Engineering:** A highly structured prompt is used to enforce translation constraints, emphasizing:
-    * **Strict preservation of $\mathbf{\LaTeX}$ math environments** (e.g., inline `$…$`, $\backslash(…\backslash)$, $\backslash[…\backslash]$, and `equation` environments).
-    * Maintenance of all document hierarchy (headings, sections, paragraphs, formatting).
-    * Fluency in the target scientific language.
-2.  **Execution:** The raw block content is passed to the LLM. The resulting translated text is stored in the `translated_latex` field of a new `Block` instance.
+### Linux / macOS (One-Click Install)
 
-#### D. $\mathbf{\LaTeX}$ Output Generation and Compilation
+```bash
+# Clone the repository
+git clone https://github.com/your-repo/pdf-translator.git
+cd pdf-translator
 
-The final document assembly is handled by the $\LaTeX$ compilation module (`latex_build.py`).
+# Make scripts executable
+chmod +x install.sh run.sh
 
-1.  **Source Generation:** The `render_latex` function constructs the `main.tex` source file.
-    * A standard scientific document class is utilized (`\documentclass{article}`).
-    * The `babel` package is configured for proper hyphenation and localization based on the `target_language`.
-    * The translated $\mathbf{Block}$ content is iterated over and formatted according to its `element_type`:
-        * **Text:** Followed by two newlines (`\n\n`) to create a new paragraph.
-        * **Captions/Tables/Placeholders:** Wrapped in appropriate $\mathbf{\LaTeX}$ environments (e.g., `\begin{table}`, `\begin{figure}`, or inserted directly if a pre-formatted placeholder).
-2.  **Robust Compilation:** The $\mathbf{\LaTeX}$ source is compiled using `pdflatex` in a non-stop mode. The compilation is executed **twice** to ensure resolution of cross-references, table of contents, and bibliography citations.
-3.  **Error Handling:** The system explicitly checks the exit code of `pdflatex`. If compilation fails, the main error message (starting with `!`) is extracted from the generated `.log` file and relayed as the job failure reason.
+# Install everything
+./install.sh
 
-***
+# Start the application
+./run.sh
+```
 
-### III. Conclusion
+---
 
-This framework establishes a reliable, multi-stage process for high-fidelity translation of scientific PDFs. By separating the document into semantically and structurally distinct blocks, leveraging the linguistic and contextual power of modern LLMs, and utilizing the robust typesetting capabilities of $\mathbf{\LaTeX}$, the system minimizes layout degradation and maximizes the academic utility of the translated output.
+## 💻 System Requirements
+
+### Minimum Requirements
+
+| Component | Minimum | Notes |
+|-----------|---------|-------|
+| **Operating System** | Windows 10/11, Ubuntu 20.04+, macOS 12+ | 64-bit required |
+| **Python** | 3.10 or higher | 3.11+ recommended |
+| **RAM** | 8 GB | For small models only |
+| **GPU VRAM** | 4 GB | NVIDIA recommended |
+| **Storage** | 10 GB free | More for larger models |
+| **LaTeX** | TeX Live or MiKTeX | Required for PDF output |
+
+### Recommended Requirements
+
+| Component | Recommended | Notes |
+|-----------|-------------|-------|
+| **Python** | 3.11 or 3.12 | Best performance |
+| **RAM** | 16 GB or more | For larger models |
+| **GPU VRAM** | 8-24 GB | NVIDIA RTX series |
+| **Storage** | 50 GB free | For multiple models |
+
+### GPU Compatibility
+
+| GPU Brand | Support Level | Notes |
+|-----------|---------------|-------|
+| **NVIDIA** | ✅ Full Support | Best performance, auto-detected |
+| **AMD** | ⚠️ Partial | ROCm required on Linux |
+| **Apple Silicon** | ✅ Good | M1/M2/M3 unified memory |
+| **Intel** | ⚠️ Limited | CPU fallback available |
+
+---
+
+## 📦 Detailed Installation
+
+### Step 1: Install Python
+
+#### Windows
+```powershell
+# Option A: Using winget (recommended)
+winget install Python.Python.3.11
+
+# Option B: Download from python.org
+# Go to https://www.python.org/downloads/
+# Download Python 3.11 or 3.12
+# Run installer, CHECK "Add Python to PATH"
+```
+
+#### Linux (Ubuntu/Debian)
+```bash
+sudo apt update
+sudo apt install python3.11 python3.11-venv python3-pip
+```
+
+#### macOS
+```bash
+# Using Homebrew
+brew install python@3.11
+```
+
+**Verify installation:**
+```bash
+python --version
+# Should show: Python 3.11.x or higher
+```
+
+---
+
+### Step 2: Install Ollama (Recommended for Local AI)
+
+Ollama allows you to run AI models locally without sending data to the cloud.
+
+#### Windows
+```powershell
+# Using winget
+winget install Ollama.Ollama
+
+# Or download from https://ollama.ai/download
+```
+
+#### Linux
+```bash
+curl -fsSL https://ollama.ai/install.sh | sh
+```
+
+#### macOS
+```bash
+brew install ollama
+```
+
+**Start Ollama service:**
+```bash
+ollama serve
+```
+
+**Download a model:**
+```bash
+# Recommended for 16GB VRAM
+ollama pull llama3.1:8b
+
+# For 8GB VRAM
+ollama pull llama3.2:3b
+
+# For 24GB+ VRAM
+ollama pull mistral-small:22b
+```
+
+---
+
+### Step 3: Install LaTeX
+
+LaTeX is required to compile the translated PDF output.
+
+#### Windows
+```powershell
+# Using winget (recommended)
+winget install MiKTeX.MiKTeX
+
+# After installation, open MiKTeX Console and:
+# 1. Click "Check for updates"
+# 2. Install all updates
+# 3. Restart your terminal
+```
+
+**Alternative: TeX Live**
+- Download from https://tug.org/texlive/
+- Run the installer (takes 30-60 minutes)
+
+#### Linux (Ubuntu/Debian)
+```bash
+# Basic installation (smaller, ~500MB)
+sudo apt install texlive-latex-base texlive-latex-extra
+
+# Full installation (larger, ~3GB, recommended)
+sudo apt install texlive-full
+
+# For multilingual support
+sudo apt install texlive-lang-english texlive-lang-german texlive-lang-french
+```
+
+#### macOS
+```bash
+# Basic installation
+brew install --cask basictex
+
+# Full installation (recommended)
+brew install --cask mactex
+```
+
+**Verify installation:**
+```bash
+pdflatex --version
+# Should show version information
+```
+
+---
+
+### Step 4: Set Up the Application
+
+#### Automatic Setup (Recommended)
+
+**Windows:**
+```batch
+install.bat
+```
+
+**Linux/macOS:**
+```bash
+./install.sh
+```
+
+The install script will:
+1. ✅ Create a Python virtual environment
+2. ✅ Install all Python dependencies
+3. ✅ Check for Ollama and offer to install it
+4. ✅ Start Ollama service
+5. ✅ Check for LaTeX and offer to install it
+6. ✅ Download an AI model (interactive selection)
+
+#### Manual Setup
+
+```bash
+# 1. Create virtual environment
+python -m venv venv
+
+# 2. Activate virtual environment
+# Windows:
+venv\Scripts\activate
+# Linux/macOS:
+source venv/bin/activate
+
+# 3. Upgrade pip
+python -m pip install --upgrade pip
+
+# 4. Install dependencies
+pip install -r requirements.txt
+
+# 5. Verify installation
+python -c "import gradio; print('Gradio OK')"
+python -c "import requests; print('Requests OK')"
+```
+
+---
+
+## ▶️ Running the Application
+
+### Method 1: Using Run Scripts (Recommended)
+
+**Windows:**
+```batch
+run.bat
+```
+
+**Linux/macOS:**
+```bash
+./run.sh
+```
+
+The run script will:
+1. Activate the virtual environment
+2. Check if Ollama is running (start if needed)
+3. Add MiKTeX to PATH if needed
+4. Launch the Gradio web interface
+5. Open your browser automatically
+
+### Method 2: Manual Start
+
+```bash
+# Activate virtual environment
+# Windows:
+venv\Scripts\activate
+# Linux/macOS:
+source venv/bin/activate
+
+# Start Ollama (in a separate terminal)
+ollama serve
+
+# Start the application
+python gradio_app.py
+```
+
+### Method 3: With Share URL (Access from Other Devices)
+
+```bash
+python gradio_app.py --share
+```
+
+This generates a public URL like `https://abc123.gradio.live` that:
+- Is valid for 72 hours
+- Can be accessed from any device
+- Requires your PC to stay on
+
+### Command Line Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--share` | Generate public URL for remote access | `python gradio_app.py --share` |
+| `--port` | Use a different port (default: 7860) | `python gradio_app.py --port 8080` |
+| `--no-browser` | Don't open browser automatically | `python gradio_app.py --no-browser` |
+
+### Access the Application
+
+After starting, open your browser and go to:
+- **Local:** http://127.0.0.1:7860
+- **Network:** http://YOUR_IP:7860 (if using `--share` or `0.0.0.0`)
+
+---
+
+## 📖 Using the Application
+
+### Step-by-Step Translation Guide
+
+#### 1. Upload Your PDF
+
+- Click the **"Upload PDF"** area or drag & drop your file
+- Supported: Scientific papers, articles, documentation
+- Maximum size: 50 MB
+- Best results with text-based PDFs (not scanned images)
+
+#### 2. Select Target Language
+
+Choose from 20 languages:
+
+| Language | Code | | Language | Code |
+|----------|------|-|----------|------|
+| 🇬🇧 English | en | | 🇵🇱 Polish | pl |
+| 🇩🇪 German | de | | 🇹🇷 Turkish | tr |
+| 🇫🇷 French | fr | | 🇸🇪 Swedish | sv |
+| 🇪🇸 Spanish | es | | 🇨🇿 Czech | cs |
+| 🇮🇹 Italian | it | | 🇬🇷 Greek | el |
+| 🇯🇵 Japanese | ja | | 🇮🇳 Hindi | hi |
+| 🇨🇳 Chinese | zh | | 🇸🇦 Arabic | ar |
+| 🇵🇹 Portuguese | pt | | 🇺🇦 Ukrainian | uk |
+| 🇷🇺 Russian | ru | | 🇮🇱 Hebrew | he |
+| 🇰🇷 Korean | ko | | 🇳🇱 Dutch | nl |
+
+#### 3. Choose Backend
+
+**Ollama (Local) - Recommended**
+- ✅ 100% private - no data leaves your PC
+- ✅ Free to use
+- ✅ Works offline
+- ⚠️ Requires GPU with sufficient VRAM
+
+**OpenAI (Cloud)**
+- ✅ Best translation quality
+- ✅ No GPU required
+- ⚠️ Costs ~$0.01-0.05 per page
+- ⚠️ Requires internet connection
+
+**No Translation**
+- Only extracts and reformats the PDF
+- Useful for testing LaTeX output
+
+#### 4. Configure Ollama (if selected)
+
+1. **Check VRAM Detection** - The app shows your detected GPU VRAM
+2. **Select VRAM** - Choose your GPU's VRAM from the dropdown
+3. **Select Model** - Choose a model that fits your VRAM
+   - 💾 = Already installed
+   - ✅ = Fits comfortably
+   - ⚠️ = Might be tight
+4. **Download Model** - Click if model isn't installed yet
+
+#### 5. Translate
+
+1. Click the **"🚀 Translate"** button
+2. Wait for processing:
+   - Analyzing PDF... (10%)
+   - Translating blocks... (30-70%)
+   - Compiling LaTeX... (70-95%)
+   - Done! (100%)
+3. Download the translated PDF
+
+#### 6. Download Result
+
+- Click the download button next to "Translated PDF"
+- The file path is shown in the status area
+- Original formatting and formulas are preserved
+
+---
+
+## 🤖 LLM Backend Options
+
+### Option 1: Ollama (Local) ⭐ Recommended
+
+**Advantages:**
+- 🔒 Complete privacy - data never leaves your computer
+- 💰 Free to use - no API costs
+- 🌐 Works offline - no internet required
+- ⚡ Fast for repeated use - model stays in memory
+
+**Disadvantages:**
+- 🎮 Requires GPU with sufficient VRAM
+- 📦 Initial model download (2-40 GB)
+- 🔧 Slightly more complex setup
+
+**Best for:**
+- Privacy-conscious users
+- Frequent translations
+- Users with gaming GPUs (RTX 3060+)
+
+### Option 2: OpenAI (Cloud)
+
+**Advantages:**
+- 🏆 Best translation quality (GPT-4)
+- 💻 No GPU required
+- 🚀 Instant start - no model download
+
+**Disadvantages:**
+- 💰 Costs money (~$0.01-0.05 per page)
+- 🌐 Requires internet connection
+- 🔓 Data sent to OpenAI servers
+
+**Best for:**
+- Occasional translations
+- Users without GPU
+- When quality is paramount
+
+**Setup:**
+1. Go to https://platform.openai.com
+2. Create an account and add payment method
+3. Generate an API key
+4. Enter the key in the app (NOT stored permanently!)
+
+---
+
+## 🎮 VRAM & Model Guide
+
+### Understanding VRAM Requirements
+
+| Your VRAM | What You Can Run | Quality Level |
+|-----------|------------------|---------------|
+| 4 GB | Small models (2-3B parameters) | Basic |
+| 6 GB | Small models, some 7B quantized | Good |
+| 8 GB | 7B models quantized (Q4) | Good |
+| 12 GB | 7B models full, some 12B | Very Good |
+| 16 GB | 8B-12B models comfortably | Very Good |
+| 24 GB | 22B-32B models | Excellent |
+| 32 GB+ | 70B models quantized | Premium |
+| 48 GB+ | 70B full precision | Maximum |
+
+### Recommended Models by VRAM
+
+#### 4-6 GB VRAM (GTX 1650, GTX 1060)
+
+| Model | Size | Quality | Speed |
+|-------|------|---------|-------|
+| `llama3.2:3b` | 2 GB | Good | Fast |
+| `phi3:mini` | 2.3 GB | Good | Fast |
+| `gemma2:2b` | 1.6 GB | Basic | Very Fast |
+
+```bash
+ollama pull llama3.2:3b
+```
+
+#### 8 GB VRAM (RTX 3060, GTX 1080)
+
+| Model | Size | Quality | Speed |
+|-------|------|---------|-------|
+| `mistral:7b-instruct-q4_0` | 4.1 GB | Good | Medium |
+| `llama3.2:3b` | 2 GB | Good | Fast |
+| `phi3:mini` | 2.3 GB | Good | Fast |
+
+```bash
+ollama pull mistral:7b-instruct-q4_0
+```
+
+#### 12-16 GB VRAM (RTX 3080, RTX 4070) ⭐ Sweet Spot
+
+| Model | Size | Quality | Speed |
+|-------|------|---------|-------|
+| `llama3.1:8b` ⭐ | 4.7 GB | Very Good | Medium |
+| `mistral:7b` | 4.1 GB | Very Good | Medium |
+| `mistral-nemo:12b` | 7.1 GB | Very Good | Slower |
+| `openchat:7b` | 4.1 GB | Very Good | Medium |
+
+```bash
+ollama pull llama3.1:8b
+```
+
+#### 24 GB VRAM (RTX 3090, RTX 4090)
+
+| Model | Size | Quality | Speed |
+|-------|------|---------|-------|
+| `mistral-small:22b` | 13 GB | Excellent | Medium |
+| `codestral:22b` | 13 GB | Excellent | Medium |
+| `qwen2.5:32b` | 19 GB | Excellent | Slower |
+
+```bash
+ollama pull mistral-small:22b
+```
+
+#### 32+ GB VRAM (Workstation GPUs)
+
+| Model | Size | Quality | Speed |
+|-------|------|---------|-------|
+| `mixtral:8x7b` | 26 GB | Excellent | Medium |
+| `llama3.1:70b-q4` | 40 GB | Premium | Slow |
+| `qwen2.5:72b` | 43 GB | Premium | Slow |
+
+```bash
+ollama pull mixtral:8x7b
+```
+
+### ChatGPT-like Open Source Alternatives
+
+These models are specifically trained to be conversational like ChatGPT:
+
+| Model | VRAM | Description |
+|-------|------|-------------|
+| `openchat:7b` | 8 GB | ChatGPT-like responses |
+| `neural-chat:7b` | 8 GB | Intel optimized |
+| `openchat:8b` | 10 GB | Improved version |
+| `command-r:35b` | 24 GB | Cohere's instruction model |
+
+---
+
+## 🔌 API Reference
+
+### FastAPI Endpoints
+
+Start the FastAPI server:
+```bash
+uvicorn main:app --reload
+# API: http://127.0.0.1:8000
+# Docs: http://127.0.0.1:8000/docs
+```
+
+### Upload and Translate
+
+#### With Ollama (Local)
+```bash
+curl -X POST "http://localhost:8000/upload" \
+  -F "pdf=@your_paper.pdf" \
+  -F "target_language=en" \
+  -F "use_ollama=true" \
+  -F "ollama_model=llama3.1:8b"
+```
+
+#### With OpenAI (Cloud)
+```bash
+curl -X POST "http://localhost:8000/upload" \
+  -F "pdf=@your_paper.pdf" \
+  -F "target_language=en" \
+  -F "use_openai=true" \
+  -F "openai_api_key=sk-your-key-here"
+```
+
+### Check Job Status
+
+```bash
+curl "http://localhost:8000/job/{job_id}"
+```
+
+**Response:**
+```json
+{
+  "job_id": "abc123",
+  "status": "translating",
+  "progress": 45,
+  "message": "Translating block 15 of 33..."
+}
+```
+
+### Download Result
+
+```bash
+curl -O "http://localhost:8000/job/{job_id}/pdf"
+```
+
+### Status Values
+
+| Status | Description |
+|--------|-------------|
+| `queued` | Job is waiting to start |
+| `analyzing` | PDF is being parsed |
+| `translating` | Text is being translated |
+| `latex_build` | LaTeX is being compiled |
+| `done` | Translation complete |
+| `error` | An error occurred |
+
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues and Solutions
+
+#### "Ollama not reachable"
+
+**Cause:** Ollama service is not running.
+
+**Solution:**
+```bash
+# Start Ollama
+ollama serve
+
+# Check if running
+curl http://localhost:11434/api/tags
+```
+
+#### "Model not found"
+
+**Cause:** The selected model is not downloaded.
+
+**Solution:**
+```bash
+# Download the model
+ollama pull llama3.1:8b
+
+# List installed models
+ollama list
+```
+
+#### "Out of Memory" / "CUDA out of memory"
+
+**Cause:** Model is too large for your GPU VRAM.
+
+**Solutions:**
+1. Choose a smaller model
+2. Close other GPU-intensive applications
+3. Use a quantized version (e.g., `q4_0`)
+
+```bash
+# Use quantized version
+ollama pull mistral:7b-instruct-q4_0
+```
+
+#### "PDF compilation failed" / "pdflatex not found"
+
+**Cause:** LaTeX is not installed or not in PATH.
+
+**Solution (Windows):**
+```batch
+winget install MiKTeX.MiKTeX
+# Restart your terminal after installation
+```
+
+**Solution (Linux):**
+```bash
+sudo apt install texlive-latex-base texlive-latex-extra
+```
+
+**Solution (macOS):**
+```bash
+brew install --cask basictex
+```
+
+#### "GPU not detected"
+
+**Cause:** NVIDIA drivers not installed or GPU not supported.
+
+**Solutions:**
+1. Install/update NVIDIA drivers
+2. Select VRAM manually in the dropdown
+3. Use CPU mode (slower)
+
+```bash
+# Check GPU (Windows)
+nvidia-smi
+
+# Check GPU (Linux)
+nvidia-smi
+# or
+rocm-smi  # for AMD
+```
+
+#### "Translation quality is poor"
+
+**Solutions:**
+1. Use a larger model if you have enough VRAM
+2. Switch to OpenAI for best quality
+3. Try a different model (Mistral often works well for translations)
+
+#### "Application won't start"
+
+**Solutions:**
+```bash
+# Check Python version
+python --version  # Should be 3.10+
+
+# Reinstall dependencies
+pip install -r requirements.txt --force-reinstall
+
+# Check for port conflicts
+netstat -an | grep 7860
+```
+
+### Getting Help
+
+If you encounter issues not listed here:
+
+1. Check the console output for error messages
+2. Look at the `data/jobs/{job_id}/main.log` for LaTeX errors
+3. Open an issue on GitHub with:
+   - Your operating system
+   - Python version
+   - GPU model and VRAM
+   - Full error message
+
+---
+
+## 📁 Project Structure
+
+```
+pdf-translator/
+│
+├── 📄 install.bat          # Windows installation script
+├── 📄 install.sh           # Linux/macOS installation script
+├── 📄 run.bat              # Windows start script
+├── 📄 run.sh               # Linux/macOS start script
+├── 📄 requirements.txt     # Python dependencies
+│
+├── 🎨 gradio_app.py        # Main application (Gradio UI)
+├── 🌐 index.html           # Alternative HTML frontend
+├── ⚡ main.py              # FastAPI server
+│
+├── 🔧 ollama_backend.py    # Ollama integration & VRAM detection
+├── 📑 pdf_processing.py    # PDF parsing & translation logic
+├── 📝 latex_build.py       # LaTeX generation & compilation
+├── 📊 models.py            # Data models (Block, JobInfo)
+├── 📋 jobs.py              # Job management & state tracking
+│
+├── 📂 data/                # Runtime data directory
+│   └── jobs/               # Translation jobs
+│       └── {job_id}/       # Individual job folder
+│           ├── original.pdf
+│           ├── main.tex
+│           ├── main.pdf    # Result
+│           └── main.log    # LaTeX log
+│
+└── 📖 README.md            # This file
+```
+
+---
+
+## 🔒 Security
+
+### API Key Handling
+
+- **User supplies own key:** Each user provides their own OpenAI API key
+- **No storage:** Keys are NEVER stored (no file, no database, no `.env`)
+- **No logging:** Keys are never logged; only `api_key_present=True/False`
+- **Request-local only:** Keys are used only for the current request
+
+### Security Measures
+
+| Measure | Description |
+|---------|-------------|
+| **Path Traversal Protection** | Job IDs validated as UUIDs |
+| **CORS Policy** | Credentials disabled with wildcard origins |
+| **Upload Size Limit** | Maximum 50 MB per PDF |
+| **Process Timeout** | pdflatex limited to 5 minutes |
+| **Input Sanitization** | LaTeX special characters escaped |
+
+### Deployment Recommendations
+
+- ✅ **Local/Single-user:** Safe to use as-is
+- ⚠️ **Shared environments:** Add authentication
+- ⚠️ **Production:** Add rate limiting and user auth
+
+---
+
+## 📜 License
+
+**© 2025 Sven Kalinowski with small help of Lino Casu**
+
+Licensed under the **Anti-Capitalist Software License v1.4**
+
+This software may be used for any purpose **except** for commercial use by capitalist enterprises. This includes but is not limited to:
+- Personal use ✅
+- Academic research ✅
+- Non-profit organizations ✅
+- Worker-owned cooperatives ✅
+- For-profit corporations ❌
+
+For the full license text, see: https://anticapitalist.software/
+
+---
+
+## 🙏 Acknowledgments
+
+- **Ollama** - For making local LLMs accessible
+- **Gradio** - For the beautiful UI framework
+- **Meta AI** - For the Llama models
+- **Mistral AI** - For the Mistral models
+- **The LaTeX Project** - For the typesetting system
+
+---
+
+*Made with ❤️ for the open-source community*
