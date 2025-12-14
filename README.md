@@ -66,8 +66,8 @@ Licensed under the **Anti-Capitalist Software License v1.4**
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/pdf-translator.git
-cd pdf-translator
+git clone https://github.com/error-wtf/pdf-translator-enhanced.git
+cd pdf-translator-enhanced
 
 # Make scripts executable
 chmod +x install.sh run.sh
