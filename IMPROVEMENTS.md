@@ -183,12 +183,61 @@ Output PDF/DOCX
 | **Math-Font-Kategorie** | ✅ |
 | **20+ Regression-Tests** | ✅ |
 
-## Noch offen (für 100% Perfektion)
+## Neue Module (2025-12-14, Commit 12c8718)
 
-1. ~~Layout-Drift~~ → calculate_scaled_font_size() existiert
-2. ~~Font-Embedding~~ → STIX/Cambria/DejaVu priorisiert
-3. **Tabellen**: Spezialbehandlung für Tabellen-Zellen
-4. **Bilder mit Text**: OCR-Fallback für Text in Bildern
+### `quality_validator.py` - End-to-End Validierung
+
+```python
+# Automatische Qualitätsprüfung
+validate_translation(original, translated) -> ValidationResult
+assert_quality(original, translated, min_score=0.8) -> str
+
+# Erkennt:
+- Formel-Verlust
+- Encoding-Korruption (??, U+FFFD)
+- Unrestored Placeholders
+- HTML-Tags im Output
+```
+
+### `table_handler.py` - Tabellen-Spezialbehandlung
+
+```python
+# Intelligente Tabellen-Übersetzung
+is_numeric_content(text) -> bool      # Zahlen nicht übersetzen
+should_translate_cell(text) -> bool   # Header vs. Daten
+protect_table_numbers(text) -> (str, Dict)  # Zahlen schützen
+```
+
+### `formula_isolator.py` - Erweiterte Patterns
+
+```python
+# NEU: Referenzen schützen
+REFERENCE_PATTERNS = [
+    r'\[\d+(?:\s*[-–,]\s*\d+)*\]',     # [1], [1-3]
+    r'(?:Fig\.|Table)\s*\d+',          # Fig. 1
+    r'Eq\.\s*\(\d+\)',                 # Eq. (1)
+]
+
+# NEU: Fußnoten schützen  
+FOOTNOTE_PATTERNS = [
+    r'[¹²³⁴⁵⁶⁷⁸⁹⁰]+',                 # Superscript-Marker
+    r'[*†‡§¶]+',                       # Symbol-Marker
+]
+```
+
+## Test-Ergebnisse: 58/58 PASSED ✅
+
+| Test-Suite | Tests | Status |
+|------------|-------|--------|
+| test_formula_protection.py | 24 | ✅ |
+| test_quality_validator.py | 17 | ✅ |
+| test_table_handler.py | 17 | ✅ |
+
+## Noch offen
+
+1. ~~Tabellen~~ → `table_handler.py` implementiert ✅
+2. **Bilder mit Text**: OCR-Fallback für Text in Bildern
+3. **languages.py**: Vorhandener Encoding-Bug (nicht durch diese Änderungen)
 
 ---
 
