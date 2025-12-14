@@ -25,7 +25,7 @@ logger = logging.getLogger("pdf_translator.overlay")
 # CONFIGURATION
 # =============================================================================
 
-MIN_TEXT_LENGTH = 15
+MIN_TEXT_LENGTH = 3  # Reduced from 15 to translate short titles
 MAX_RETRIES = 5
 RETRY_DELAY = 1.5
 
@@ -37,7 +37,7 @@ UNICODE_FONT_PATHS = [
     "/System/Library/Fonts/STIXGeneral.otf",  # macOS
 ]
 
-# Scientific glossary
+# Scientific glossary for German
 GLOSSARY_DE = {
     "entanglement": "Verschränkung",
     "entangled": "verschränkt",
@@ -49,6 +49,13 @@ GLOSSARY_DE = {
     "spacetime": "Raumzeit",
     "phase": "Phase",
     "quantum": "Quanten",
+    "abstract": "Zusammenfassung",
+    "introduction": "Einleitung",
+    "methods": "Methoden",
+    "results": "Ergebnisse",
+    "conclusions": "Schlussfolgerungen",
+    "references": "Literaturverzeichnis",
+    "acknowledgments": "Danksagung",
 }
 
 
@@ -107,12 +114,16 @@ def is_translatable_text(text: str) -> bool:
     if len(text) < MIN_TEXT_LENGTH:
         return False
     
-    # Must have actual words
-    if not re.search(r'[a-zA-Z]{4,}', text):
+    # Must have at least one letter
+    if not re.search(r'[a-zA-Z]', text):
         return False
     
     # Skip URLs/emails
     if re.search(r'https?://|@.*\.[a-z]', text):
+        return False
+    
+    # Skip pure numbers/dates
+    if re.match(r'^[\d\s\-/\.,:]+$', text):
         return False
     
     return True
@@ -160,6 +171,53 @@ def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
     return blocks
 
 
+def merge_adjacent_blocks(blocks: List[TextBlock], tolerance: float = 5.0) -> List[TextBlock]:
+    """Merge blocks that are on the same line (for split titles)."""
+    if not blocks:
+        return blocks
+    
+    # Sort by y position, then x position
+    sorted_blocks = sorted(blocks, key=lambda b: (b.rect.y0, b.rect.x0))
+    
+    merged = []
+    current = None
+    
+    for block in sorted_blocks:
+        if current is None:
+            current = block
+            continue
+        
+        # Check if blocks are on same line (similar y position)
+        same_line = abs(block.rect.y0 - current.rect.y0) < tolerance
+        # Check if blocks are close horizontally
+        close = block.rect.x0 - current.rect.x1 < 50
+        # Check if similar font size
+        similar_size = abs(block.font_size - current.font_size) < 2
+        
+        if same_line and close and similar_size:
+            # Merge blocks
+            new_rect = fitz.Rect(
+                min(current.rect.x0, block.rect.x0),
+                min(current.rect.y0, block.rect.y0),
+                max(current.rect.x1, block.rect.x1),
+                max(current.rect.y1, block.rect.y1)
+            )
+            current = TextBlock(
+                text=current.text + " " + block.text,
+                rect=new_rect,
+                font_size=current.font_size,
+                font_name=current.font_name
+            )
+        else:
+            merged.append(current)
+            current = block
+    
+    if current:
+        merged.append(current)
+    
+    return merged
+
+
 # =============================================================================
 # TRANSLATION
 # =============================================================================
@@ -176,6 +234,11 @@ def translate_text_ollama(
     if not text.strip():
         return text
     
+    # Quick glossary lookup for single words
+    text_lower = text.strip().lower()
+    if glossary and text_lower in glossary:
+        return glossary[text_lower].title() if text[0].isupper() else glossary[text_lower]
+    
     glossary_text = ""
     if glossary:
         glossary_text = "MANDATORY TERMINOLOGY:\n"
@@ -186,11 +249,12 @@ def translate_text_ollama(
 
 {glossary_text}
 CRITICAL RULES:
-- Output ONLY the translation
+- Output ONLY the translation, nothing else
 - Keep ALL mathematical symbols unchanged: Δ, Φ, ω, ×, ⁻, ¹, ⁶, —, etc.
 - Keep numbers and units unchanged
 - Keep author names unchanged
-- Use correct scientific terminology from glossary"""
+- Use correct scientific terminology from glossary
+- For short words like "Abstract", translate directly"""
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -213,8 +277,9 @@ CRITICAL RULES:
                 result = re.sub(r'^(Here|Translation|Übersetzung).*?:\s*', '', result, flags=re.I)
                 result = re.sub(r'^```\w*\n?', '', result)
                 result = re.sub(r'\n?```$', '', result)
+                result = result.strip('"\'')
                 
-                if result and len(result) >= len(text) * 0.5:
+                if result and len(result) >= len(text) * 0.3:
                     return result
             
             time.sleep(RETRY_DELAY * (attempt + 1))
@@ -254,7 +319,7 @@ def translate_pdf_overlay(
         warnings=[]
     )
     
-    glossary = GLOSSARY_DE if target_language.lower() in ["german", "deutsch"] else {}
+    glossary = GLOSSARY_DE if target_language.lower() in ["german", "deutsch", "de"] else {}
     
     # Get Unicode font
     unicode_font = get_unicode_font()
@@ -275,7 +340,10 @@ def translate_pdf_overlay(
             if progress_callback:
                 progress_callback(progress, 100, f"Page {page_num + 1}/{total_pages}")
             
+            # Extract and merge blocks
             blocks = extract_text_blocks(page)
+            blocks = merge_adjacent_blocks(blocks)
+            
             blocks_to_replace = []
             
             for block in blocks:
