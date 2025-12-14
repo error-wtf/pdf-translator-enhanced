@@ -25,6 +25,15 @@ from typing import Optional, Tuple, List, Dict, Callable
 from dataclasses import dataclass, field
 import fitz  # PyMuPDF
 
+# Import enhanced formula protection
+from formula_isolator import (
+    extract_formulas as extract_formulas_enhanced,
+    normalize_output,
+    audit_utf8,
+    assert_no_corruption,
+    regression_check,
+)
+
 logger = logging.getLogger("pdf_translator.perfect")
 
 
@@ -447,7 +456,15 @@ def translate_chunk_perfect(
     """Translate a single chunk with PERFECT validation."""
     import requests
     
-    protected_text, formula_map = isolate_formulas(text)
+    # UTF-8 audit before processing
+    utf8_warnings = audit_utf8(text, "input")
+    if utf8_warnings:
+        logger.warning(f"UTF-8 issues: {utf8_warnings}")
+    
+    # Use enhanced formula extraction (includes Unicode math)
+    enhanced_result = extract_formulas_enhanced(text)
+    protected_text = enhanced_result.text_with_placeholders
+    formula_map = enhanced_result.formula_map
     expected_placeholders = list(formula_map.keys())
     
     last_issue = ""
@@ -494,6 +511,13 @@ def translate_chunk_perfect(
             
             if validation.valid:
                 final_text, _, _ = restore_formulas(result, formula_map)
+                # Normalize output (remove HTML artifacts, ensure consistent format)
+                final_text = normalize_output(final_text, mode="unicode")
+                # Final corruption check
+                if not assert_no_corruption(final_text):
+                    logger.warning("Corruption detected after restoration, retrying...")
+                    last_issue = "Corruption detected"
+                    continue
                 logger.info(f"Chunk validated on attempt {attempt + 1}: {validation.translated_sentences}/{validation.original_sentences} sentences")
                 return final_text, True, ""
             
@@ -511,6 +535,7 @@ def translate_chunk_perfect(
     
     if best_result and best_validation and best_validation.length_ratio >= 0.5:
         final_text, _, _ = restore_formulas(best_result, formula_map)
+        final_text = normalize_output(final_text, mode="unicode")
         logger.warning(f"Using best attempt despite validation failure: {last_issue}")
         return final_text, False, last_issue
     

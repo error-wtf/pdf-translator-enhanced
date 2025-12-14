@@ -32,6 +32,14 @@ from text_normalizer import normalize_text, normalize_and_reflow, count_garbage_
 from caption_anchoring import anchor_captions_to_images, sort_blocks_reading_order, AnchoredFigure
 from table_detector import detect_tables_in_page, DetectedTable
 
+# Import enhanced formula protection
+from formula_isolator import (
+    extract_and_protect,
+    normalize_output,
+    audit_utf8,
+    assert_no_corruption,
+)
+
 logger = logging.getLogger("pdf_translator.unified")
 
 

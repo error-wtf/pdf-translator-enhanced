@@ -20,6 +20,13 @@ import re
 from typing import List, Dict, Tuple, Optional, Callable
 from dataclasses import dataclass, field
 
+# Import enhanced formula protection
+from formula_isolator import (
+    extract_and_protect,
+    normalize_output,
+    assert_no_corruption,
+)
+
 logger = logging.getLogger("pdf_translator.two_pass")
 
 
