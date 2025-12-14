@@ -1,0 +1,77 @@
+# PDF Translator Enhanced - Docker Compose
+#
+# Start: docker-compose up -d
+# Stop:  docker-compose down
+#
+# © 2025 Sven Kalinowski with small help of Lino Casu
+# Licensed under the Anti-Capitalist Software License v1.4
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # PDF Translator - Main Application
+  # ==========================================================================
+  pdf-translator:
+    build: .
+    container_name: pdf-translator
+    ports:
+      - "7860:7860"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Input/Output directories
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      # Cache persistence
+      - translator-cache:/app/cache
+    depends_on:
+      - ollama
+    networks:
+      - translator-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:7860/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ==========================================================================
+  # Ollama - Local LLM Server
+  # ==========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - translator-net
+    restart: unless-stopped
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  translator-net:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  ollama-data:
+    name: pdf-translator-ollama
+  translator-cache:
+    name: pdf-translator-cache
