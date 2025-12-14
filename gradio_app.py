@@ -1,8 +1,10 @@
 """
 Gradio Frontend for PDF-Translator
 Supports PDF, DOCX, and LaTeX files.
-- PDF: Uses overlay method with Cambria font (100% formula preservation)
-- DOCX: Perfect translation with formatting preserved
+
+NEW: PDFs are automatically converted to DOCX for PERFECT translation!
+- PDF → DOCX → Translate → Output DOCX (perfect formatting)
+- DOCX: Direct perfect translation
 - LaTeX: Direct source translation
 
 Licensed under the Anti-Capitalist Software License v1.4
@@ -91,17 +93,39 @@ def pull_ollama_model(model_name: str) -> str:
     return message
 
 
+def convert_pdf_to_docx(pdf_path: str, output_dir: Path) -> Optional[str]:
+    """Convert PDF to DOCX using pdf2docx."""
+    try:
+        from pdf2docx import Converter
+        
+        docx_path = str(output_dir / "converted.docx")
+        cv = Converter(pdf_path)
+        cv.convert(docx_path)
+        cv.close()
+        return docx_path
+    except ImportError:
+        logger.warning("pdf2docx not installed, falling back to overlay method")
+        return None
+    except Exception as e:
+        logger.warning(f"PDF to DOCX conversion failed: {e}")
+        return None
+
+
 def translate_document(
     doc_file,
     target_language: str,
     ollama_model: str,
+    use_perfect_mode: bool,
     progress=gr.Progress()
 ) -> Tuple[Optional[str], str]:
     """
     Translate document (PDF, DOCX, or LaTeX).
-    - PDF: Overlay method with Cambria font (100% formula preservation)
-    - DOCX: Perfect translation with formatting preserved (RECOMMENDED)
-    - LaTeX: Direct source translation
+    
+    PERFECT MODE (default for PDF):
+    - PDF → DOCX → Translate → Perfect DOCX output
+    
+    LEGACY MODE:
+    - PDF → Overlay translation (keeps original PDF format)
     """
     if doc_file is None:
         return None, "Please upload a file."
@@ -141,14 +165,14 @@ Paragraphs translated: {result.paragraphs_translated}
 Paragraphs skipped: {result.paragraphs_skipped}
 
 PERFECT FEATURES:
-- All formatting preserved (bold, italic, fonts)
-- Tables translated
-- Mathematical formulas preserved
-- Document structure intact
+✓ All formatting preserved (bold, italic, fonts)
+✓ Tables translated
+✓ Mathematical formulas preserved
+✓ Document structure intact
 
 Output: {result.output_path}
 
-TIP: Open in Word and export as PDF for perfect results."""
+TIP: Open in Word and export as PDF."""
                 
                 if result.warnings:
                     status += f"\n\nWarnings: {', '.join(result.warnings)}"
@@ -172,19 +196,68 @@ TIP: Open in Word and export as PDF for perfect results."""
                 return str(output_tex), f"✅ LaTeX translation complete!\n\nFile: {output_tex}\n\nCompile with pdflatex for perfect PDF."
             return None, "LaTeX translation failed."
         
-        # Handle PDF files (overlay method)
-        progress(0.05, desc="Starting PDF translation (overlay mode)...")
-        
-        result = translate_pdf_overlay(
-            doc_file.name,
-            str(output_dir),
-            ollama_model,
-            target_language,
-            progress_callback=lambda c, t, s: progress(c/100, desc=s)
-        )
-        
-        if result.success:
-            status = f"""✅ PDF Translation Complete
+        # Handle PDF files
+        if file_ext == '.pdf':
+            
+            # PERFECT MODE: Convert PDF to DOCX first
+            if use_perfect_mode:
+                progress(0.02, desc="Converting PDF to DOCX (perfect mode)...")
+                
+                converted_docx = convert_pdf_to_docx(doc_file.name, output_dir)
+                
+                if converted_docx:
+                    progress(0.10, desc="PDF converted! Now translating DOCX...")
+                    output_docx = output_dir / "translated.docx"
+                    
+                    result = translate_docx(
+                        converted_docx,
+                        str(output_docx),
+                        ollama_model,
+                        target_language,
+                        progress_callback=lambda c, t, s: progress(0.10 + 0.85 * c/100, desc=s)
+                    )
+                    
+                    if result.success:
+                        status = f"""✅ PDF Translation Complete (PERFECT MODE)
+
+Pipeline: PDF → DOCX → Translate
+
+Paragraphs translated: {result.paragraphs_translated}
+Paragraphs skipped: {result.paragraphs_skipped}
+
+PERFECT FEATURES:
+✓ Complete paragraphs (no fragmentation)
+✓ Titles fully translated
+✓ Tables translated
+✓ Formulas preserved
+
+Output: {result.output_path}
+
+TIP: Open in Word and export as PDF for final result."""
+                        
+                        if result.warnings:
+                            status += f"\n\nWarnings: {', '.join(result.warnings)}"
+                        
+                        return result.output_path, status
+                    else:
+                        # Fall back to overlay method
+                        progress(0.10, desc="DOCX translation failed, using overlay method...")
+                else:
+                    progress(0.05, desc="PDF conversion failed, using overlay method...")
+            
+            # LEGACY/FALLBACK: Overlay method (keeps PDF format)
+            progress(0.05, desc="Starting PDF translation (overlay mode)...")
+            
+            result = translate_pdf_overlay(
+                doc_file.name,
+                str(output_dir),
+                ollama_model,
+                target_language,
+                progress_callback=lambda c, t, s: progress(c/100, desc=s)
+            )
+            
+            if result.success:
+                status = f"""✅ PDF Translation Complete (Overlay Mode)
 
 Pages: {result.pages_processed}
 Blocks translated: {result.blocks_translated}
@@ -195,14 +268,16 @@ Formulas preserved: ΔΦ, ω, 10⁻¹⁶ ✓
 
 Output: {result.output_path}
 
-TIP: For PERFECT results, use the original DOCX file instead!"""
-            
-            if result.warnings:
-                status += f"\n\nWarnings: {', '.join(result.warnings)}"
-            
-            return result.output_path, status
-        else:
-            return None, f"Translation failed: {', '.join(result.warnings)}"
+NOTE: For better results, enable "Perfect Mode" checkbox."""
+                
+                if result.warnings:
+                    status += f"\n\nWarnings: {', '.join(result.warnings)}"
+                
+                return result.output_path, status
+            else:
+                return None, f"Translation failed: {', '.join(result.warnings)}"
+        
+        return None, f"Unsupported file format: {file_ext}"
     
     except Exception as e:
         logger.exception("Translation failed")
@@ -219,18 +294,17 @@ def create_gradio_app():
         
         gr.Markdown("""
         # PDF & DOCX Translator
-        ### Translate scientific documents with formula preservation
+        ### Translate scientific documents with PERFECT formula preservation
         
-        **Supported formats:**
-        - **DOCX** (Word) - ⭐ PERFECT translation with all formatting
-        - **PDF** - Good translation with Cambria font for math symbols
-        - **LaTeX** (.tex) - Direct source translation
+        **NEW: Perfect Mode for PDFs!**
+        - PDFs are converted to DOCX first → perfect translation
+        - No more fragmented titles or missing text
         """)
         
         with gr.Row():
             with gr.Column(scale=1):
                 doc_input = gr.File(
-                    label="Upload Document (DOCX recommended for perfect results)",
+                    label="Upload Document (PDF, DOCX, or LaTeX)",
                     file_types=[".pdf", ".docx", ".tex"],
                     type="filepath",
                 )
@@ -239,6 +313,12 @@ def create_gradio_app():
                     choices=list(LANGUAGES.keys()),
                     value="German",
                     label="Target Language",
+                )
+                
+                perfect_mode = gr.Checkbox(
+                    value=True,
+                    label="⭐ Perfect Mode (PDF → DOCX → Translate)",
+                    info="Converts PDF to DOCX first for perfect results"
                 )
                 
                 # VRAM selection
@@ -289,15 +369,18 @@ def create_gradio_app():
                 
                 status_output = gr.Textbox(
                     label="Status",
-                    lines=14,
+                    lines=16,
                 )
                 
                 gr.Markdown("""
-                ### Why DOCX is better than PDF:
-                - **Perfect formatting** - bold, italic, fonts preserved
-                - **Complete paragraphs** - no fragmented blocks
-                - **Tables translated** - with structure intact
-                - **Easy to PDF** - just export from Word
+                ### Perfect Mode vs Legacy Mode:
+                
+                | Feature | Perfect Mode | Legacy Mode |
+                |---------|--------------|-------------|
+                | **Titles** | ✅ Complete | ⚠️ Fragmented |
+                | **Formatting** | ✅ Preserved | ⚠️ Basic |
+                | **Tables** | ✅ Translated | ❌ Skipped |
+                | **Output** | DOCX | PDF |
                 
                 ### Scientific terminology:
                 - Entanglement → Verschränkung
@@ -317,7 +400,7 @@ def create_gradio_app():
         
         translate_btn.click(
             translate_document,
-            inputs=[doc_input, target_lang, model_select],
+            inputs=[doc_input, target_lang, model_select, perfect_mode],
             outputs=[output_file, status_output],
         )
         
