@@ -7,6 +7,8 @@ Translates Word documents while preserving:
 - Mathematical formulas
 - Document structure
 
+NEW: Batch translation for better context!
+
 © 2025 Sven Kalinowski with small help of Lino Casu
 Licensed under the Anti-Capitalist Software License v1.4
 """
@@ -32,6 +34,7 @@ logger = logging.getLogger("docx_translator")
 
 MAX_RETRIES = 5
 RETRY_DELAY = 1.5
+BATCH_SIZE = 5  # Translate multiple paragraphs together for better context
 
 # Scientific glossary for German
 GLOSSARY_DE = {
@@ -72,13 +75,103 @@ class TranslationResult:
 # TRANSLATION
 # =============================================================================
 
+def translate_batch_ollama(
+    texts: List[str],
+    model: str,
+    target_language: str,
+    glossary: Dict[str, str] = None
+) -> List[str]:
+    """Translate multiple texts in one call for better context."""
+    import requests
+    
+    if not texts:
+        return texts
+    
+    # Filter empty texts
+    valid_indices = [i for i, t in enumerate(texts) if t.strip() and re.search(r'[a-zA-Z]{2,}', t)]
+    if not valid_indices:
+        return texts
+    
+    # Build numbered text block
+    numbered_texts = []
+    for idx, i in enumerate(valid_indices):
+        numbered_texts.append(f"[{idx+1}] {texts[i]}")
+    
+    combined = "\n\n".join(numbered_texts)
+    
+    glossary_text = ""
+    if glossary:
+        glossary_text = "MANDATORY TERMINOLOGY (use these exact translations):\n"
+        for en, trans in list(glossary.items())[:15]:  # Top 15 terms
+            glossary_text += f"  {en} → {trans}\n"
+    
+    system_prompt = f"""You are a scientific translator. Translate to {target_language}.
+
+{glossary_text}
+CRITICAL RULES:
+1. Translate each numbered section [1], [2], etc. separately
+2. Keep the [N] markers in your output
+3. Output ONLY translations - no explanations
+4. Keep ALL math symbols: Δ, Φ, ω, ×, ⁻¹, ², ³, π, α, β, γ, ∞, ∑, ∫
+5. Keep numbers, units, author names, URLs unchanged
+6. Use formal scientific {target_language}"""
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.post(
+                "http://localhost:11434/api/chat",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Translate these scientific text sections to {target_language}:\n\n{combined}"}
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 8192}
+                },
+                timeout=300
+            )
+            
+            if response.status_code == 200:
+                result = response.json().get("message", {}).get("content", "").strip()
+                
+                # Parse numbered responses
+                translations = texts.copy()  # Start with originals
+                
+                for idx, orig_i in enumerate(valid_indices):
+                    marker = f"[{idx+1}]"
+                    # Find this section in response
+                    start = result.find(marker)
+                    if start != -1:
+                        start += len(marker)
+                        # Find next marker or end
+                        next_marker = result.find(f"[{idx+2}]", start)
+                        if next_marker == -1:
+                            section = result[start:].strip()
+                        else:
+                            section = result[start:next_marker].strip()
+                        
+                        if section and len(section) >= len(texts[orig_i]) * 0.3:
+                            translations[orig_i] = section
+                
+                return translations
+            
+            time.sleep(RETRY_DELAY * (attempt + 1))
+            
+        except Exception as e:
+            logger.warning(f"Batch translation attempt {attempt + 1} failed: {e}")
+            time.sleep(RETRY_DELAY * (attempt + 1))
+    
+    return texts  # Return originals on failure
+
+
 def translate_text_ollama(
     text: str,
     model: str,
     target_language: str,
     glossary: Dict[str, str] = None
 ) -> str:
-    """Translate text using Ollama."""
+    """Translate single text using Ollama (fallback)."""
     import requests
     
     if not text.strip():
@@ -192,6 +285,7 @@ def translate_docx(
 ) -> TranslationResult:
     """
     Translate a DOCX file while preserving all formatting.
+    Uses batch translation for better context.
     """
     result = TranslationResult(
         success=False,
@@ -212,15 +306,12 @@ def translate_docx(
         total_paragraphs = len(doc.paragraphs)
         
         if progress_callback:
-            progress_callback(0, 100, f"Processing {total_paragraphs} paragraphs...")
+            progress_callback(0, 100, f"Processing {total_paragraphs} paragraphs in batches...")
         
-        # Translate paragraphs
+        # Collect translatable paragraphs in batches
+        batch_paragraphs = []  # (index, paragraph, original_text)
+        
         for i, para in enumerate(doc.paragraphs):
-            progress = int(5 + 85 * i / total_paragraphs)
-            
-            if progress_callback and i % 5 == 0:
-                progress_callback(progress, 100, f"Paragraph {i + 1}/{total_paragraphs}")
-            
             # Skip empty paragraphs
             if not para.text.strip():
                 result.paragraphs_skipped += 1
@@ -228,7 +319,6 @@ def translate_docx(
             
             # Skip paragraphs with math content (preserve formulas)
             if has_math_content(para):
-                logger.info(f"Skipping math paragraph: {para.text[:50]}...")
                 result.paragraphs_skipped += 1
                 continue
             
@@ -237,41 +327,52 @@ def translate_docx(
                 result.paragraphs_skipped += 1
                 continue
             
-            # Translate the paragraph text
-            original_text = para.text
-            translated_text = translate_text_ollama(original_text, model, target_language, glossary)
+            batch_paragraphs.append((i, para, para.text))
+        
+        # Process in batches for better context
+        total_batches = (len(batch_paragraphs) + BATCH_SIZE - 1) // BATCH_SIZE
+        
+        for batch_idx in range(0, len(batch_paragraphs), BATCH_SIZE):
+            batch = batch_paragraphs[batch_idx:batch_idx + BATCH_SIZE]
+            current_batch = batch_idx // BATCH_SIZE + 1
             
-            if translated_text == original_text:
-                result.paragraphs_skipped += 1
-                continue
+            progress = int(5 + 80 * batch_idx / len(batch_paragraphs))
+            if progress_callback:
+                progress_callback(progress, 100, f"Batch {current_batch}/{total_batches} ({len(batch)} paragraphs)")
             
-            # Replace text while preserving formatting
-            # Strategy: Replace text in runs proportionally
-            if para.runs:
-                # Calculate total original length
-                total_len = sum(len(run.text) for run in para.runs)
+            # Extract texts for batch translation
+            texts = [item[2] for item in batch]
+            
+            # Batch translate for better context
+            translated_texts = translate_batch_ollama(texts, model, target_language, glossary)
+            
+            # Apply translations
+            for (orig_idx, para, original_text), translated_text in zip(batch, translated_texts):
+                if translated_text == original_text:
+                    result.paragraphs_skipped += 1
+                    continue
                 
-                if total_len > 0:
-                    # Distribute translated text across runs proportionally
-                    translated_pos = 0
+                # Replace text while preserving formatting
+                if para.runs:
+                    total_len = sum(len(run.text) for run in para.runs)
                     
-                    for run in para.runs:
-                        if not run.text:
-                            continue
+                    if total_len > 0:
+                        translated_pos = 0
                         
-                        # Calculate proportion of this run
-                        run_proportion = len(run.text) / total_len
-                        chars_for_run = int(len(translated_text) * run_proportion)
-                        
-                        # Get the translated chunk
-                        if run == para.runs[-1]:
-                            # Last run gets the rest
-                            run.text = translated_text[translated_pos:]
-                        else:
-                            run.text = translated_text[translated_pos:translated_pos + chars_for_run]
-                            translated_pos += chars_for_run
-            
-            result.paragraphs_translated += 1
+                        for run in para.runs:
+                            if not run.text:
+                                continue
+                            
+                            run_proportion = len(run.text) / total_len
+                            chars_for_run = int(len(translated_text) * run_proportion)
+                            
+                            if run == para.runs[-1]:
+                                run.text = translated_text[translated_pos:]
+                            else:
+                                run.text = translated_text[translated_pos:translated_pos + chars_for_run]
+                                translated_pos += chars_for_run
+                
+                result.paragraphs_translated += 1
         
         # Translate tables
         if progress_callback:
