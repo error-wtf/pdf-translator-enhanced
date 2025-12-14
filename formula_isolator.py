@@ -167,15 +167,17 @@ class IsolationResult:
         """Restore all formulas in translated text."""
         result = translated_text
         for placeholder, original in self.formula_map.items():
-            result = result.replace(placeholder, original)
+            # Case-insensitive replacement (LLM might change case)
+            pattern = re.escape(placeholder)
+            result = re.sub(pattern, original.replace('\\', '\\\\'), result, flags=re.IGNORECASE)
         return result
     
     def verify_restoration(self, restored_text: str) -> List[str]:
         """Verify all formulas were restored. Returns list of issues."""
         issues = []
         
-        # Check no placeholders remain
-        remaining = re.findall(r'⟦[A-Z]+_[a-f0-9]+_\d+⟧', restored_text)
+        # Check no placeholders remain (case-insensitive for hex chars)
+        remaining = re.findall(r'⟦[A-Z]+_[a-fA-F0-9]+_\d+⟧', restored_text, re.IGNORECASE)
         if remaining:
             issues.append(f"Unrestored placeholders: {remaining}")
         
