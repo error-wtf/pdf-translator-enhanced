@@ -2,63 +2,14 @@
 # © 2025 Sven Kalinowski with small help of Lino Casu
 # Licensed under the Anti-Capitalist Software License v1.4
 
-# === Core Framework ===
-fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic>=2.5.0
-
-# === PDF Processing ===
-PyPDF2>=3.0.0
-pdfplumber>=0.11.0
+# === Core Dependencies ===
 pymupdf>=1.24.0
-langdetect>=1.0.9
-
-# === Scientific PDF Processing (Marker) ===
-# Marker provides best-in-class formula extraction for scientific PDFs
-marker-pdf>=1.0.0
-huggingface_hub>=0.20.0
-
-# === LLM Backends ===
-openai>=1.3.0
 requests>=2.31.0
-
-# === Gradio Frontend ===
 gradio>=4.0.0
 
-# === Utilities ===
-python-multipart>=0.0.6
-numpy>=1.24.0
-Pillow>=10.0.0
+# === Optional: Language Detection ===
+langdetect>=1.0.9
 
-# ============================================================
-# OPTIONAL DEPENDENCIES - Enhanced Features
-# ============================================================
-# Install these for additional capabilities.
-# The translator works without them but with reduced features.
-
-# === Optional: Nougat OCR (better formula extraction) ===
-# Meta's Neural Optical Understanding for Academic Documents
-# Excellent for extracting complex formulas from scientific PDFs
-# pip install nougat-ocr        # CPU
-# pip install nougat-ocr[gpu]   # GPU (faster)
-# nougat-ocr>=0.1.17
-
-# === Optional: pix2tex (formula image recognition) ===
-# Recognizes LaTeX formulas in images
-# Useful for PDFs with embedded formula images
-# pip install pix2tex
-# pix2tex>=0.1.0
-
-# === Optional: Table Transformer (ML table detection) ===
-# Microsoft's Table Transformer for better table detection
-# pip install transformers torch torchvision
-# transformers>=4.36.0
-# torch>=2.0.0
-# torchvision>=0.15.0
-
-# ============================================================
-# DEVELOPMENT DEPENDENCIES
-# ============================================================
-# pytest>=7.4.0
-# black>=23.0.0
-# ruff>=0.1.0
+# === Optional: LaTeX File Translation ===
+# Only needed if you want to translate .tex files
+# PyPDF2>=3.0.0
