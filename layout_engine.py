@@ -26,14 +26,17 @@ logger = logging.getLogger("pdf_translator.layout")
 # =============================================================================
 
 # Unicode-capable fonts for different scripts
+# Priority: Math-capable fonts first for scientific documents
 FONT_FALLBACKS = {
     # Latin-based languages (German, French, Spanish, Italian, etc.)
     "latin": [
-        "Helvetica",
-        "Arial",
-        "DejaVu Sans",
+        "STIX Two Text",      # Best for math symbols
+        "Cambria",            # Good math support on Windows
+        "DejaVu Sans",        # Excellent Unicode coverage
         "Liberation Sans",
         "Noto Sans",
+        "Helvetica",
+        "Arial",
     ],
     # Cyrillic (Russian, Ukrainian, etc.)
     "cyrillic": [
@@ -42,11 +45,20 @@ FONT_FALLBACKS = {
         "Noto Sans",
         "Arial",
     ],
-    # Greek
+    # Greek (needs good Greek letter support)
     "greek": [
+        "STIX Two Text",      # Excellent Greek support
         "DejaVu Sans",
         "Noto Sans",
         "Arial",
+    ],
+    # Math/Scientific (special category for formulas)
+    "math": [
+        "STIX Two Math",      # Best for math rendering
+        "STIX Two Text",
+        "Cambria Math",
+        "DejaVu Sans",
+        "Latin Modern Math",
     ],
     # CJK (Chinese, Japanese, Korean)
     "cjk": [
