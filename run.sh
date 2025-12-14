@@ -50,6 +50,16 @@ detect_os() {
     echo "$OS"
 }
 
+# CLI flags
+SHARE_FLAG=""
+for arg in "$@"; do
+    case "$arg" in
+        --share|-s)
+            SHARE_FLAG="--share"
+            ;;
+    esac
+done
+
 print_header
 OS=$(detect_os)
 echo -e "System: ${BOLD}$OS${NC}"
@@ -182,7 +192,16 @@ echo -e "${GREEN}============================================================${N
 echo -e "${GREEN}   Application Starting${NC}"
 echo -e "${GREEN}============================================================${NC}"
 echo ""
-echo -e "   URL:  ${CYAN}http://127.0.0.1:7860${NC}"
+
+if [ -n "$SHARE_FLAG" ]; then
+    echo -e "   Local URL:  ${CYAN}http://127.0.0.1:7860${NC}"
+    echo -e "   Public URL: ${CYAN}Will be generated...${NC}"
+else
+    echo -e "   URL:  ${CYAN}http://127.0.0.1:7860${NC}"
+    echo ""
+    echo -e "   TIP: Use ${CYAN}./run.sh --share${NC} for a public URL"
+fi
+
 echo ""
 echo -e "   Press ${YELLOW}Ctrl+C${NC} to stop the server."
 echo ""
@@ -190,7 +209,7 @@ echo -e "${GREEN}============================================================${N
 echo ""
 
 # Start Gradio with error handling
-python gradio_app.py
+python gradio_app.py $SHARE_FLAG
 EXIT_CODE=$?
 
 if [ "$EXIT_CODE" != "0" ]; then
