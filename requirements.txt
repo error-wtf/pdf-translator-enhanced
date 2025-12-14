@@ -10,5 +10,8 @@ gradio>=4.0.0
 # === DOCX Support (Perfect Translation) ===
 python-docx>=1.1.0
 
+# === PDF to DOCX Conversion (Perfect Mode) ===
+pdf2docx>=0.5.6
+
 # === Optional: Language Detection ===
 langdetect>=1.0.9
