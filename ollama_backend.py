@@ -158,6 +158,14 @@ OLLAMA_MODELS: Dict[str, Dict[str, Any]] = {
         "description": "Qwen 2.5 14B - 128K context, multilingual",
         "quality": "excellent",
     },
+    "gpt-oss:20b": {
+        "vram_min": 16,
+        "vram_recommended": 24,
+        "size_gb": 12.0,
+        "context_length": 65536,
+        "description": "GPT-OSS 20B - strong general model",
+        "quality": "excellent",
+    },
     # ============================================================
     # 32 GB VRAM
     # ============================================================
@@ -270,13 +278,13 @@ def detect_gpu_vram() -> Optional[int]:
     """
     Automatically detects available GPU VRAM in GB.
     Supports NVIDIA (nvidia-smi), AMD (rocm-smi) and Apple Silicon.
-    
+
     Returns:
         VRAM in GB or None if not detectable
     """
     import subprocess
     import platform
-    
+
     # NVIDIA GPU (Windows/Linux)
     try:
         result = subprocess.run(
@@ -295,7 +303,7 @@ def detect_gpu_vram() -> Optional[int]:
                 return vram_gb
     except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
         pass
-    
+
     # AMD GPU (Linux with ROCm)
     try:
         result = subprocess.run(
@@ -320,7 +328,7 @@ def detect_gpu_vram() -> Optional[int]:
                             pass
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-    
+
     # Apple Silicon (macOS) - Unified Memory
     if platform.system() == "Darwin":
         try:
@@ -338,7 +346,7 @@ def detect_gpu_vram() -> Optional[int]:
                 return usable_gb
         except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
             pass
-    
+
     logger.warning("Could not detect GPU VRAM automatically")
     return None
 
@@ -421,14 +429,14 @@ def get_models_for_vram_with_installed(vram_gb: int) -> List[Dict[str, Any]]:
     """
     installed = get_installed_models()
     suitable = []
-    
+
     for model_name, info in OLLAMA_MODELS.items():
         if info["vram_min"] <= vram_gb:
             # Check if installed (exact or similar version)
             base_name = model_name.split(":")[0]
             is_installed = False
             installed_version = None
-            
+
             for m in installed:
                 if m == model_name:
                     is_installed = True
@@ -438,7 +446,7 @@ def get_models_for_vram_with_installed(vram_gb: int) -> List[Dict[str, Any]]:
                     is_installed = True
                     installed_version = m
                     break
-            
+
             suitable.append({
                 "name": model_name,
                 **info,
@@ -446,7 +454,7 @@ def get_models_for_vram_with_installed(vram_gb: int) -> List[Dict[str, Any]]:
                 "is_installed": is_installed,
                 "installed_version": installed_version,
             })
-    
+
     # Sort: Installed first, then by quality
     quality_order = {"maximum": 5, "premium": 4, "excellent": 3, "very good": 2, "good": 1, "basic": 0}
     suitable.sort(
@@ -463,16 +471,16 @@ def get_models_for_vram_with_installed(vram_gb: int) -> List[Dict[str, Any]]:
 def pull_model(model_name: str, progress_callback=None) -> bool:
     """
     Downloads an Ollama model.
-    
+
     Args:
         model_name: Name of the model (e.g. "llama3.1:8b")
         progress_callback: Optional callback(status: str, percent: int)
-    
+
     Returns:
         True if successful
     """
     logger.info("Pulling Ollama model: %s", model_name)
-    
+
     try:
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/pull",
@@ -480,34 +488,34 @@ def pull_model(model_name: str, progress_callback=None) -> bool:
             stream=True,
             timeout=3600,  # 1 hour for large models
         )
-        
+
         if response.status_code != 200:
             logger.error("Failed to pull model: HTTP %d", response.status_code)
             return False
-        
+
         for line in response.iter_lines():
             if line:
                 import json
                 try:
                     data = json.loads(line)
                     status = data.get("status", "")
-                    
+
                     if progress_callback:
                         # Calculate progress if possible
                         completed = data.get("completed", 0)
                         total = data.get("total", 0)
                         percent = int(completed / total * 100) if total > 0 else 0
                         progress_callback(status, percent)
-                    
+
                     if status == "success":
                         logger.info("Model %s pulled successfully", model_name)
                         return True
-                        
+
                 except json.JSONDecodeError:
                     pass
-        
+
         return True
-        
+
     except Exception as e:
         logger.exception("Error pulling model %s: %s", model_name, e)
         return False
@@ -516,62 +524,62 @@ def pull_model(model_name: str, progress_callback=None) -> bool:
 def get_model_context_length(model_name: str) -> int:
     """
     Returns the context length for a specific model.
-    
+
     Args:
         model_name: Ollama model name (e.g., "mistral-nemo:12b")
-    
+
     Returns:
         Context length in tokens
     """
     # Check exact match first
     if model_name in OLLAMA_MODELS:
         return OLLAMA_MODELS[model_name].get("context_length", DEFAULT_CONTEXT_LENGTH)
-    
+
     # Check base model name (without tag)
     base_name = model_name.split(":")[0].lower()
     for name, info in OLLAMA_MODELS.items():
         if name.lower().startswith(base_name) or base_name.startswith(name.split(":")[0].lower()):
             return info.get("context_length", DEFAULT_CONTEXT_LENGTH)
-    
+
     # Heuristics for unknown models based on name patterns
     name_lower = model_name.lower()
-    
+
     # Most modern large models support 128K
     if any(x in name_lower for x in ['llama3', 'qwen', 'mistral', 'phi3', 'command-r']):
         return 131072  # 128K
-    
+
     # Older or smaller models typically have 32K
     if any(x in name_lower for x in ['llama2', 'codellama', 'vicuna', 'openchat']):
         return 32768  # 32K
-    
+
     # GPT-like models (custom fine-tunes) - assume good context
     if 'gpt' in name_lower:
         return 65536  # 64K
-    
+
     return DEFAULT_CONTEXT_LENGTH
 
 
 def get_token_limit_for_model(model_name: str, vram_gb: Optional[int] = None) -> int:
     """
     Returns optimal token limit based on model's context window AND available VRAM.
-    
+
     Uses the MINIMUM of:
     - Model's native context length
     - VRAM-based safe limit
-    
+
     Args:
         model_name: Ollama model name
         vram_gb: Available VRAM in GB (auto-detected if None)
-    
+
     Returns:
         num_predict token limit
     """
     if vram_gb is None:
         vram_gb = detect_gpu_vram() or 8
-    
+
     # Get model's native context length
     model_context = get_model_context_length(model_name)
-    
+
     # VRAM-based limits - AGGRESSIVE for maximum context usage
     # Modern models handle large contexts well, so we push limits
     VRAM_TOKEN_MAP = {
@@ -586,16 +594,16 @@ def get_token_limit_for_model(model_name: str, vram_gb: Optional[int] = None) ->
         64: 131072,    # 64GB: full context
         96: 131072,    # 96GB: full context
     }
-    
+
     # Find VRAM-based limit - use detected VRAM directly
     vram_limit = 4096  # Minimum
     for vram_threshold, tokens in sorted(VRAM_TOKEN_MAP.items()):
         if vram_gb >= vram_threshold:
             vram_limit = tokens
-    
+
     # Use minimum of model context and VRAM limit
     token_limit = min(model_context, vram_limit)
-    
+
     logger.info("Model %s: context=%d, VRAM %dGB limit=%d → using %d tokens", 
                 model_name, model_context, vram_gb, vram_limit, token_limit)
     return token_limit
@@ -605,13 +613,13 @@ def get_token_limit_for_vram(vram_gb: Optional[int] = None) -> int:
     """
     Returns optimal token limit based on available VRAM only.
     DEPRECATED: Use get_token_limit_for_model() for model-specific limits.
-    
+
     Returns:
         num_predict token limit
     """
     if vram_gb is None:
         vram_gb = detect_gpu_vram() or 8
-    
+
     # AGGRESSIVE token limits for maximum context
     VRAM_TOKEN_MAP = {
         4:  4096,      # 4GB: ~8 pages
@@ -625,12 +633,12 @@ def get_token_limit_for_vram(vram_gb: Optional[int] = None) -> int:
         64: 131072,    # 64GB: full 128K
         96: 131072,    # 96GB: full 128K
     }
-    
+
     best_tokens = 4096
     for vram_threshold, tokens in sorted(VRAM_TOKEN_MAP.items()):
         if vram_gb >= vram_threshold:
             best_tokens = tokens
-    
+
     logger.info("VRAM %d GB → token limit %d", vram_gb, best_tokens)
     return best_tokens
 
@@ -638,7 +646,7 @@ def get_token_limit_for_vram(vram_gb: Optional[int] = None) -> int:
 def get_page_estimate_for_model(model_name: str, vram_gb: Optional[int] = None) -> int:
     """
     Returns estimated number of pages based on model's context window and VRAM.
-    
+
     Based on ~500 tokens per page average for scientific papers.
     """
     token_limit = get_token_limit_for_model(model_name, vram_gb)
@@ -652,7 +660,7 @@ def get_page_estimate_for_vram(vram_gb: Optional[int] = None) -> int:
     """
     if vram_gb is None:
         vram_gb = detect_gpu_vram() or 8
-    
+
     # AGGRESSIVE page estimates matching new token limits
     VRAM_PAGE_MAP = {
         4:  8,       # 4GB: ~8 pages
@@ -666,12 +674,12 @@ def get_page_estimate_for_vram(vram_gb: Optional[int] = None) -> int:
         64: 262,     # 64GB: full context
         96: 262,     # 96GB: full context
     }
-    
+
     best_pages = 8
     for vram_threshold, pages in sorted(VRAM_PAGE_MAP.items()):
         if vram_gb >= vram_threshold:
             best_pages = pages
-    
+
     return best_pages
 
 
@@ -685,7 +693,7 @@ def translate_with_ollama(
 ) -> str:
     """
     Translates text using Ollama with VRAM-optimized token limits.
-    
+
     Args:
         text: Text to translate
         model: Ollama model name
@@ -693,16 +701,16 @@ def translate_with_ollama(
         target_language: Target language
         element_type: Type of element (text, figure_caption, table_content)
         vram_gb: Available VRAM in GB (auto-detected if None)
-    
+
     Returns:
         Translated text
     """
     if not text.strip():
         return text
-    
+
     # Get model-specific token limit (considers both model context and VRAM)
     token_limit = get_token_limit_for_model(model, vram_gb)
-    
+
     # Prompt basierend auf Element-Typ - DETAILLIERT wie OpenAI-Version
     if element_type == "figure_caption":
         task = f"""You are a professional scientific translator.
@@ -766,20 +774,20 @@ Rules:
             },
             timeout=300,  # 5 minutes per block
         )
-        
+
         if response.status_code == 200:
             data = response.json()
             # /api/chat returns message.content instead of response
             message = data.get("message", {})
             result = message.get("content", text)
-            
+
             # Post-process: Remove any echoed instructions/prompts
             result = _clean_translation_output(result, target_language)
             return result
         else:
             logger.error("Ollama API error: HTTP %d", response.status_code)
             return text
-            
+
     except Exception as e:
         logger.exception("Ollama translation error: %s", e)
         return text
@@ -790,7 +798,7 @@ def _clean_translation_output(text: str, target_language: str) -> str:
     Removes any echoed prompts or meta-comments from translation output.
     """
     import re
-    
+
     # Patterns that indicate echoed instructions (in various languages)
     bad_patterns = [
         r'^(ABSOLUTE RULES?|CRITICAL INSTRUCTIONS?|RULES?:).*?(?=\n\n|\Z)',
@@ -801,15 +809,15 @@ def _clean_translation_output(text: str, target_language: str) -> str:
         r'^(Translate to|Traduci in|Übersetze nach).*?:\s*',
         r'^(TEXT|TESTO|TEXTE):?\s*\n',
     ]
-    
+
     result = text
     for pattern in bad_patterns:
         result = re.sub(pattern, '', result, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
-    
+
     # Remove leading/trailing whitespace and multiple newlines
     result = re.sub(r'\n{3,}', '\n\n', result)
     result = result.strip()
-    
+
     return result
 
 
@@ -830,6 +838,7 @@ def get_vram_recommendations() -> str:
 | | `neural-chat:7b` | 4.1 GB | Intel, optimized for chat |
 | **24 GB** | `mistral-small:22b` | 13 GB | Official Mistral Small |
 | | `codestral:22b` | 13 GB | Mistral for Code & Text |
+| | `gpt-oss:20b` | 12 GB | GPT-OSS 20B |
 | | `openchat:8b` | 4.9 GB | Improved ChatGPT alternative |
 | **32 GB** | `mixtral:8x7b` | 26 GB | Mistral MoE, very strong |
 | | `qwen2.5:32b` | 19 GB | Top for multilingual |
