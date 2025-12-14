@@ -39,6 +39,7 @@ from latex_translator import translate_latex_file
 from pdf_marker_translator import translate_pdf_with_marker
 from page_by_page_translator import translate_pdf_page_by_page
 from unified_translator import translate_pdf_unified
+from perfect_translator import translate_pdf_perfect
 from uuid import uuid4
 from datetime import datetime
 
@@ -558,6 +559,37 @@ def translate_pdf(
                 latex_source_dir, progress
             )
         
+        # Use Perfect mode for maximum quality (two-pass + validation)
+        use_perfect = "Perfect" in extraction_mode
+        if use_perfect:
+            if not use_ollama and not use_openai:
+                return None, "❌ Perfect mode requires Ollama or OpenAI backend."
+            progress(0.02, desc="Starting PERFECT translation (two-pass + validation)...")
+            result = translate_pdf_perfect(
+                pdf_file.name,
+                str(job_dir),
+                ollama_model if use_ollama else "",
+                target_language,
+                progress_callback=lambda c, t, s: progress(c / 100, desc=s),
+            )
+            if result.success:
+                status = f"""✅ **PERFECT Translation Complete!**
+
+📄 **{result.pages_processed} pages** processed
+📊 **Quality Metrics:**
+  - Original: {result.total_original_chars:,} chars
+  - Translated: {result.total_translated_chars:,} chars
+  - Ratio: {result.translation_ratio:.1%}
+  - Formulas: {result.formulas_preserved}/{result.formula_count} preserved
+  - Validation: {'✅ PASSED' if result.validation_passed else '⚠️ WARNINGS'}
+
+📁 Output: {result.output_path}"""
+                if result.warnings:
+                    status += f"\n\n⚠️ Warnings: {', '.join(result.warnings)}"
+                return result.output_path, status
+            else:
+                return None, f"❌ Perfect translation failed: {', '.join(result.warnings)}"
+        
         # Use Unified mode for best quality (combines all methods)
         use_unified = "Unified" in extraction_mode
         if use_unified:
@@ -719,14 +751,15 @@ def create_gradio_app():
                         
                         extraction_mode = gr.Radio(
                             choices=[
+                                "⭐ Perfect (Maximum Quality - Two-Pass + Validation)",
                                 "Unified (Best Quality - Combines All Methods)",
                                 "Page-by-Page (Layout & Images)",
                                 "Marker (Scientific PDFs)",
                                 "Standard (Fast)"
                             ],
-                            value="Unified (Best Quality - Combines All Methods)",
+                            value="⭐ Perfect (Maximum Quality - Two-Pass + Validation)",
                             label="PDF Extraction Mode",
-                            info="Unified: Best quality, combines Marker + PyMuPDF. Page-by-Page: Layout focus. Marker: Formula focus. Standard: Fast.",
+                            info="Perfect: Maximum quality with validation. Unified: Good quality. Page-by-Page: Layout focus. Marker: Formula focus.",
                         )
                         
                         backend_choice = gr.Radio(
