@@ -1,19 +1,13 @@
 """
-PDF Overlay Translator - 100% Layout Preservation
+PDF Overlay Translator - 100% Formula Preservation
 
-This translator preserves the EXACT original PDF layout:
-- Formulas remain as images/vectors (100% identical)
-- Images remain untouched
-- Only TEXT BLOCKS are translated and replaced
-
+CRITICAL: Formulas must remain 100% identical!
 Strategy:
-1. Copy original PDF
-2. For each text block:
-   - Extract text
-   - Translate text
-   - Redact (white-out) original text
-   - Insert translated text at same position
-3. Formulas/images untouched
+1. Copy original page structure
+2. Identify text blocks
+3. Skip ANY block containing Unicode math symbols
+4. Only translate pure ASCII/Latin text blocks
+5. Formulas stay as original vectors/images
 
 © 2025 Sven Kalinowski with small help of Lino Casu
 Licensed under the Anti-Capitalist Software License v1.4
@@ -22,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import re
-import copy
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Callable
@@ -36,9 +29,27 @@ logger = logging.getLogger("pdf_translator.overlay")
 # CONFIGURATION
 # =============================================================================
 
-MIN_TEXT_LENGTH = 10  # Minimum characters to translate
+MIN_TEXT_LENGTH = 20  # Minimum characters to translate
 MAX_RETRIES = 5
 RETRY_DELAY = 1.5
+
+# Unicode ranges that indicate formulas - NEVER translate these blocks
+FORMULA_UNICODE_RANGES = [
+    (0x0370, 0x03FF),   # Greek letters
+    (0x2070, 0x209F),   # Superscripts/subscripts
+    (0x2100, 0x214F),   # Letterlike symbols
+    (0x2150, 0x218F),   # Number forms
+    (0x2190, 0x21FF),   # Arrows
+    (0x2200, 0x22FF),   # Mathematical operators
+    (0x2300, 0x23FF),   # Misc technical
+    (0x27C0, 0x27EF),   # Misc math symbols A
+    (0x2980, 0x29FF),   # Misc math symbols B
+    (0x2A00, 0x2AFF),   # Supplemental math operators
+    (0x1D400, 0x1D7FF), # Math alphanumeric symbols
+]
+
+# Individual formula characters
+FORMULA_CHARS = set('∫∑∏∂∇√∞±×÷≈≠≤≥∈∉⊂⊃∪∩∧∨¬∀∃∅∆∇αβγδεζηθικλμνξπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΠΡΣΤΥΦΧΨΩ⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎')
 
 # Scientific glossary
 GLOSSARY_DE = {
@@ -65,7 +76,7 @@ class TextBlock:
     rect: fitz.Rect
     font_size: float
     font_name: str
-    is_formula: bool = False
+    has_formula: bool = False
     translated: str = ""
 
 
@@ -76,57 +87,81 @@ class TranslationResult:
     output_path: Optional[str]
     pages_processed: int
     blocks_translated: int
-    blocks_skipped: int
+    blocks_skipped_formula: int
+    blocks_skipped_other: int
     warnings: List[str] = field(default_factory=list)
 
 
 # =============================================================================
-# FORMULA DETECTION
+# FORMULA DETECTION - STRICT
 # =============================================================================
 
-def is_likely_formula(text: str) -> bool:
-    """Detect if text is likely a mathematical formula."""
-    # Check for common formula patterns
-    formula_indicators = [
-        r'[∫∑∏∂∇√∞±×÷≈≠≤≥∈∉⊂⊃∪∩]',  # Math symbols
-        r'[αβγδεζηθικλμνξπρστυφχψω]',  # Greek letters
-        r'[ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΠΡΣΤΥΦΧΨΩ]',  # Capital Greek
-        r'\d+[\^_]\{?\d',  # Superscripts/subscripts
-        r'\\[a-zA-Z]+',   # LaTeX commands
-        r'\$.*\$',        # Inline math
-        r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]',  # Unicode superscripts
-        r'[₀₁₂₃₄₅₆₇₈₉₊₋]',  # Unicode subscripts
-    ]
-    
-    for pattern in formula_indicators:
-        if re.search(pattern, text):
-            # If mostly symbols, it's a formula
-            symbol_count = len(re.findall(pattern, text))
-            word_count = len(text.split())
-            if symbol_count > 0 and (symbol_count / max(word_count, 1)) > 0.3:
+def contains_formula_unicode(text: str) -> bool:
+    """
+    Check if text contains ANY Unicode character that indicates a formula.
+    If yes, the ENTIRE block is skipped to preserve formulas 100%.
+    """
+    for char in text:
+        # Check individual formula characters
+        if char in FORMULA_CHARS:
+            return True
+        
+        # Check Unicode ranges
+        code = ord(char)
+        for start, end in FORMULA_UNICODE_RANGES:
+            if start <= code <= end:
                 return True
     
     return False
 
 
-def is_translatable_text(text: str) -> bool:
-    """Check if text should be translated."""
+def contains_latex_patterns(text: str) -> bool:
+    """Check for LaTeX-style patterns."""
+    patterns = [
+        r'\$.*?\$',           # Inline math
+        r'\\[a-zA-Z]+',       # LaTeX commands
+        r'\^{',               # Superscript
+        r'_{',                # Subscript
+        r'\\frac',            # Fractions
+        r'\\sqrt',            # Square root
+    ]
+    
+    for pattern in patterns:
+        if re.search(pattern, text):
+            return True
+    
+    return False
+
+
+def is_pure_text_block(text: str) -> bool:
+    """
+    Check if block contains ONLY translatable text.
+    Returns False if ANY formula indicator is found.
+    """
     text = text.strip()
     
     # Too short
     if len(text) < MIN_TEXT_LENGTH:
         return False
     
-    # Likely a formula
-    if is_likely_formula(text):
+    # Contains formula Unicode
+    if contains_formula_unicode(text):
         return False
     
-    # Only numbers/symbols
-    if not re.search(r'[a-zA-Z]{3,}', text):
+    # Contains LaTeX patterns
+    if contains_latex_patterns(text):
+        return False
+    
+    # Only numbers/symbols (no words)
+    if not re.search(r'[a-zA-Z]{4,}', text):
         return False
     
     # URL or email
-    if re.search(r'https?://|@.*\.', text):
+    if re.search(r'https?://|@.*\.[a-z]', text):
+        return False
+    
+    # Em-dash (often near formulas)
+    if '—' in text or '–' in text:
         return False
     
     return True
@@ -140,14 +175,12 @@ def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
     """Extract text blocks with their positions."""
     blocks = []
     
-    # Get text as dictionary with position info
     text_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
     
     for block in text_dict.get("blocks", []):
-        if block.get("type") != 0:  # Only text blocks
+        if block.get("type") != 0:
             continue
         
-        # Collect all text from this block
         block_text = ""
         font_sizes = []
         font_names = []
@@ -164,23 +197,21 @@ def extract_text_blocks(page: fitz.Page) -> List[TextBlock]:
         if not block_text:
             continue
         
-        # Get block rectangle
         bbox = block.get("bbox", [0, 0, 0, 0])
         rect = fitz.Rect(bbox)
         
-        # Average font size
         avg_font_size = sum(font_sizes) / len(font_sizes) if font_sizes else 10
         primary_font = font_names[0] if font_names else ""
         
-        # Check if formula
-        is_formula = is_likely_formula(block_text)
+        # Check for formula content
+        has_formula = contains_formula_unicode(block_text) or contains_latex_patterns(block_text)
         
         blocks.append(TextBlock(
             text=block_text,
             rect=rect,
             font_size=avg_font_size,
             font_name=primary_font,
-            is_formula=is_formula
+            has_formula=has_formula
         ))
     
     return blocks
@@ -202,7 +233,6 @@ def translate_text_ollama(
     if not text.strip():
         return text
     
-    # Build glossary instruction
     glossary_text = ""
     if glossary:
         glossary_text = "MANDATORY TERMINOLOGY:\n"
@@ -214,7 +244,7 @@ def translate_text_ollama(
 {glossary_text}
 RULES:
 - Output ONLY the translation
-- Keep numbers, symbols, formulas unchanged
+- Keep numbers unchanged
 - Keep author names unchanged
 - Use correct scientific terminology"""
 
@@ -236,8 +266,6 @@ RULES:
             
             if response.status_code == 200:
                 result = response.json().get("message", {}).get("content", "").strip()
-                
-                # Clean up common artifacts
                 result = re.sub(r'^(Here|Translation|Übersetzung).*?:\s*', '', result, flags=re.I)
                 result = re.sub(r'^```\w*\n?', '', result)
                 result = re.sub(r'\n?```$', '', result)
@@ -251,42 +279,42 @@ RULES:
             logger.warning(f"Translation attempt {attempt + 1} failed: {e}")
             time.sleep(RETRY_DELAY * (attempt + 1))
     
-    return text  # Return original on failure
+    return text
 
 
 # =============================================================================
-# PDF OVERLAY MODIFICATION
+# PDF TRANSLATION - FORMULA-SAFE
 # =============================================================================
 
-def replace_text_in_pdf(
+def translate_pdf_overlay(
     input_pdf: str,
-    output_pdf: str,
+    output_dir: str,
     model: str,
     target_language: str,
     progress_callback: Optional[Callable] = None
 ) -> TranslationResult:
     """
-    Replace text in PDF while preserving layout.
+    Translate PDF while preserving formulas 100%.
     
-    This uses the redaction technique:
-    1. Add white redaction annotation over original text
-    2. Apply redaction (removes original)
-    3. Insert translated text at same position
+    Any block containing Unicode math symbols is left UNTOUCHED.
     """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_pdf = str(output_dir / "translated_overlay.pdf")
+    
     result = TranslationResult(
         success=False,
         output_path=None,
         pages_processed=0,
         blocks_translated=0,
-        blocks_skipped=0,
+        blocks_skipped_formula=0,
+        blocks_skipped_other=0,
         warnings=[]
     )
     
-    # Get glossary for target language
     glossary = GLOSSARY_DE if target_language.lower() in ["german", "deutsch"] else {}
     
     try:
-        # Open document
         doc = fitz.open(input_pdf)
         total_pages = len(doc)
         
@@ -300,14 +328,18 @@ def replace_text_in_pdf(
             if progress_callback:
                 progress_callback(progress, 100, f"Page {page_num + 1}/{total_pages}")
             
-            # Extract text blocks
             blocks = extract_text_blocks(page)
             
-            # Process each block
             for block in blocks:
-                # Skip formulas and non-translatable text
-                if block.is_formula or not is_translatable_text(block.text):
-                    result.blocks_skipped += 1
+                # NEVER touch formula blocks
+                if block.has_formula:
+                    result.blocks_skipped_formula += 1
+                    logger.debug(f"Skipped formula block: {block.text[:50]}...")
+                    continue
+                
+                # Skip non-pure text blocks
+                if not is_pure_text_block(block.text):
+                    result.blocks_skipped_other += 1
                     continue
                 
                 # Translate
@@ -316,30 +348,21 @@ def replace_text_in_pdf(
                 )
                 
                 if translated == block.text:
-                    result.blocks_skipped += 1
+                    result.blocks_skipped_other += 1
                     continue
                 
-                # Redact original text (white fill)
-                page.add_redact_annot(
-                    block.rect,
-                    fill=(1, 1, 1)  # White
-                )
-                
+                # Redact and replace
+                page.add_redact_annot(block.rect, fill=(1, 1, 1))
                 block.translated = translated
                 result.blocks_translated += 1
             
-            # Apply all redactions for this page
             page.apply_redactions()
             
             # Insert translated text
             for block in blocks:
                 if block.translated:
-                    # Calculate font size to fit
-                    font_size = block.font_size
-                    
-                    # Insert text
                     try:
-                        # Try to fit text in the original rectangle
+                        font_size = block.font_size
                         rc = page.insert_textbox(
                             block.rect,
                             block.translated,
@@ -348,7 +371,6 @@ def replace_text_in_pdf(
                             align=fitz.TEXT_ALIGN_LEFT
                         )
                         
-                        # If text doesn't fit, reduce font size
                         if rc < 0:
                             font_size = max(6, font_size * 0.8)
                             page.insert_textbox(
@@ -360,11 +382,9 @@ def replace_text_in_pdf(
                             )
                     except Exception as e:
                         logger.warning(f"Text insertion failed: {e}")
-                        result.warnings.append(f"Page {page_num + 1}: text insertion failed")
             
             result.pages_processed += 1
         
-        # Save modified PDF
         if progress_callback:
             progress_callback(96, 100, "Saving PDF...")
         
@@ -386,34 +406,19 @@ def replace_text_in_pdf(
 
 
 # =============================================================================
-# IDENTITY TEST (EN -> EN)
+# IDENTITY TEST
 # =============================================================================
 
 def identity_test(input_pdf: str, output_pdf: str) -> Dict:
-    """
-    Test: Extract text, don't translate, reconstruct.
-    Should produce identical text output.
-    """
+    """Test: Copy PDF without modification. Should be identical."""
     doc = fitz.open(input_pdf)
     out_doc = fitz.open()
     
-    differences = []
-    
     for page_num in range(len(doc)):
         page = doc[page_num]
-        
-        # Get original text
-        original_text = page.get_text()
-        
-        # Create new page with same dimensions
-        new_page = out_doc.new_page(
-            width=page.rect.width,
-            height=page.rect.height
-        )
-        
-        # Copy page content (including images, formulas as vectors)
+        new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
         new_page.show_pdf_page(new_page.rect, doc, page_num)
-        
+    
     out_doc.save(output_pdf)
     out_doc.close()
     doc.close()
@@ -422,49 +427,17 @@ def identity_test(input_pdf: str, output_pdf: str) -> Dict:
     doc1 = fitz.open(input_pdf)
     doc2 = fitz.open(output_pdf)
     
+    differences = []
     for i in range(len(doc1)):
         t1 = doc1[i].get_text()
         t2 = doc2[i].get_text()
         if t1 != t2:
-            differences.append({
-                "page": i + 1,
-                "original_len": len(t1),
-                "copy_len": len(t2)
-            })
+            differences.append({"page": i + 1, "diff": len(t1) - len(t2)})
     
     doc1.close()
     doc2.close()
     
-    return {
-        "identical": len(differences) == 0,
-        "differences": differences
-    }
-
-
-# =============================================================================
-# MAIN - PERFECT COPY STRATEGY
-# =============================================================================
-
-def translate_pdf_overlay(
-    input_pdf: str,
-    output_dir: str,
-    model: str,
-    target_language: str,
-    progress_callback: Optional[Callable] = None
-) -> TranslationResult:
-    """
-    Perfect PDF translation using overlay strategy.
-    
-    If target_language == source language (e.g., English -> English),
-    this produces an identical copy (for testing).
-    """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_pdf = str(output_dir / "translated_overlay.pdf")
-    
-    return replace_text_in_pdf(
-        input_pdf, output_pdf, model, target_language, progress_callback
-    )
+    return {"identical": len(differences) == 0, "differences": differences}
 
 
 # =============================================================================
@@ -478,7 +451,7 @@ if __name__ == "__main__":
     
     if len(sys.argv) < 2:
         print("Usage: python pdf_overlay_translator.py input.pdf [output_dir] [language] [model]")
-        print("       python pdf_overlay_translator.py --test input.pdf  # Identity test")
+        print("       python pdf_overlay_translator.py --test input.pdf")
         sys.exit(1)
     
     if sys.argv[1] == "--test":
@@ -486,13 +459,13 @@ if __name__ == "__main__":
             print("Usage: python pdf_overlay_translator.py --test input.pdf")
             sys.exit(1)
         
-        print("Running identity test (copy without translation)...")
+        print("Running identity test...")
         result = identity_test(sys.argv[2], "identity_test_output.pdf")
         
         if result["identical"]:
             print("SUCCESS: PDF copy is identical!")
         else:
-            print(f"DIFFERENCES FOUND: {result['differences']}")
+            print(f"DIFFERENCES: {result['differences']}")
         sys.exit(0)
     
     input_pdf = sys.argv[1]
@@ -501,6 +474,7 @@ if __name__ == "__main__":
     model = sys.argv[4] if len(sys.argv) > 4 else "qwen2.5:7b"
     
     print(f"Translating {input_pdf} to {language}...")
+    print("NOTE: Blocks with formula symbols will be preserved unchanged.")
     
     result = translate_pdf_overlay(
         input_pdf, output_dir, model, language,
@@ -511,7 +485,8 @@ if __name__ == "__main__":
     print(f"SUCCESS: {result.success}")
     print(f"Pages: {result.pages_processed}")
     print(f"Blocks translated: {result.blocks_translated}")
-    print(f"Blocks skipped: {result.blocks_skipped}")
+    print(f"Blocks skipped (formulas): {result.blocks_skipped_formula}")
+    print(f"Blocks skipped (other): {result.blocks_skipped_other}")
     if result.warnings:
         print(f"Warnings: {result.warnings}")
     if result.output_path:
