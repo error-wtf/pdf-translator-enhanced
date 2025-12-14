@@ -97,8 +97,9 @@ UNICODE_MATH_PATTERNS = [
     # Math operator sequences
     (r'[∂∇∫∮∑∏√∞±∓≈≠≤≥≪≫∝∈∉⊂⊃∪∩∧∨⊕⊗⊥∥†‡×÷·]+', 'operator_seq'),
     
-    # Scientific notation with Unicode
-    (r'\d+\.?\d*\s*[×·]\s*10\s*[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', 'sci_notation'),
+    # Scientific notation with Unicode (protect entire expression including unit)
+    (r'\d+[.,]\d+\s*[×·]\s*10\s*[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+\s*[a-zA-Zμµ]+', 'sci_notation_unit'),
+    (r'\d+[.,]\d+\s*[×·]\s*10\s*[⁻⁺]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+', 'sci_notation'),
     
     # Subscript/superscript sequences
     (r'[₀₁₂₃₄₅₆₇₈₉₊₋₌ₐₑₒₓₕₖₗₘₙₚₛₜ]+', 'subscript_seq'),
