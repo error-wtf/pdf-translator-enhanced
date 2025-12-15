@@ -64,15 +64,41 @@ VRAM_OPTIONS = [
 
 
 def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
-    """Get model choices for given VRAM."""
-    models = get_models_for_vram(vram_gb)
+    """Get model choices: installed models first, then VRAM-appropriate, then cloud."""
     choices = []
+    seen = set()
+    
+    # 1. FIRST: Add all installed models from ollama list
+    installed = get_installed_models()
+    for model_id in installed:
+        if model_id not in seen:
+            label = f"✓ {model_id}" if not model_id.endswith("-cloud") else f"☁️ {model_id}"
+            choices.append((label, model_id))
+            seen.add(model_id)
+    
+    # 2. SECOND: Add VRAM-appropriate models (not yet in list)
+    models = get_models_for_vram(vram_gb)
     for model in models:
-        # models is a list of dicts with 'name', 'size', etc.
-        model_id = model.get('name', 'qwen2.5:7b')
-        size = model.get('size', '')
-        label = f"{model_id} ({size})" if size else model_id
-        choices.append((label, model_id))
+        model_id = model.get('name', '')
+        if model_id and model_id not in seen:
+            size = model.get('size', '')
+            label = f"{model_id} ({size})" if size else model_id
+            choices.append((label, model_id))
+            seen.add(model_id)
+    
+    # 3. THIRD: Add cloud models
+    cloud_models = [
+        ("☁️ gpt-oss:20b-cloud", "gpt-oss:20b-cloud"),
+        ("☁️ gpt-oss:120b-cloud", "gpt-oss:120b-cloud"),
+        ("☁️ qwen2.5:32b-cloud", "qwen2.5:32b-cloud"),
+        ("☁️ qwen2.5:72b-cloud", "qwen2.5:72b-cloud"),
+        ("☁️ deepseek-v3:671b-cloud", "deepseek-v3:671b-cloud"),
+    ]
+    for label, model_id in cloud_models:
+        if model_id not in seen:
+            choices.append((label, model_id))
+            seen.add(model_id)
+    
     return choices if choices else [("qwen2.5:7b", "qwen2.5:7b")]
 
 
