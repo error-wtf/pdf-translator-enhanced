@@ -163,6 +163,12 @@ echo   run.bat --share
 echo.
 echo ============================================================
 echo.
+echo OPTIONAL: For OCR (text in images), install Tesseract:
+echo   https://github.com/UB-Mannheim/tesseract/wiki
+echo   Then add to PATH or set TESSERACT_CMD environment variable.
+echo.
+echo ============================================================
+echo.
 
 pause
 endlocal

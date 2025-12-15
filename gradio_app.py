@@ -67,8 +67,11 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
     """Get model choices for given VRAM."""
     models = get_models_for_vram(vram_gb)
     choices = []
-    for model_id, info in models.items():
-        label = f"{info['name']} ({info['size']})"
+    for model in models:
+        # models is a list of dicts with 'name', 'size', etc.
+        model_id = model.get('name', 'qwen2.5:7b')
+        size = model.get('size', '')
+        label = f"{model_id} ({size})" if size else model_id
         choices.append((label, model_id))
     return choices if choices else [("qwen2.5:7b", "qwen2.5:7b")]
 
@@ -413,5 +416,7 @@ def create_gradio_app():
 
 
 if __name__ == "__main__":
+    import sys
+    share = "--share" in sys.argv or "-s" in sys.argv
     app = create_gradio_app()
-    app.launch(share=False)
+    app.launch(share=share)

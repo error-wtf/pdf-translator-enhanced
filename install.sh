@@ -208,3 +208,12 @@ echo -e "  ${CYAN}./run.sh --share${NC}"
 echo ""
 echo -e "${GREEN}============================================================${NC}"
 echo ""
+echo -e "${YELLOW}OPTIONAL: For OCR (text in images), install Tesseract:${NC}"
+if [ "$OS" = "Linux" ]; then
+    echo -e "  ${CYAN}sudo apt install tesseract-ocr tesseract-ocr-deu${NC}"
+elif [ "$OS" = "macOS" ]; then
+    echo -e "  ${CYAN}brew install tesseract tesseract-lang${NC}"
+fi
+echo ""
+echo -e "${GREEN}============================================================${NC}"
+echo ""

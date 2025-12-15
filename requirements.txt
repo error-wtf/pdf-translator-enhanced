@@ -15,3 +15,7 @@ pdf2docx>=0.5.6
 
 # === Optional: Language Detection ===
 langdetect>=1.0.9
+
+# === Optional: OCR for images ===
+pytesseract>=0.3.10
+Pillow>=10.0.0
