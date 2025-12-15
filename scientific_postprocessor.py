@@ -257,21 +257,37 @@ def apply_unicode_fixes(text: str, report: RepairReport) -> str:
 # Patterns for obvious extraction glitches that can be safely repaired
 SAFE_REPAIR_PATTERNS = [
     # ==========================================================================
-    # FONT GLYPH PLACEHOLDERS (e.g. ?F_afec5f_0?, ?G_12ab34_1?)
+    # FONT GLYPH PLACEHOLDERS (e.g. ?F_afec5f_0?, ?G_12ab34_1?, ?F_639222_0?)
     # These are extraction failures where font glyphs couldn't be mapped to Unicode
+    # Pattern includes both hex IDs (afec5f) and numeric IDs (639222)
     # ==========================================================================
     (
-        r'\?[A-Z]_[a-f0-9]{4,8}_\d+\?',
+        r'\?[A-Z]_[a-f0-9A-F]{4,8}_\d+\?',
         '?',  # Mark as unresolved symbol (don't remove!)
-        'font_glyph_placeholder',
+        'font_glyph_placeholder_hex',
         None
     ),
     
-    # Variant: without leading/trailing ? but with brackets
+    # Numeric glyph IDs like ?F_639222_0?
     (
-        r'\[[A-Z]_[a-f0-9]{4,8}_\d+\]',
+        r'\?[A-Z]_\d{4,8}_\d+\?',
+        '?',  # Mark as unresolved symbol (don't remove!)
+        'font_glyph_placeholder_numeric',
+        None
+    ),
+    
+    # Same patterns with square brackets
+    (
+        r'\[[A-Z]_[a-f0-9A-F]{4,8}_\d+\]',
         '?',  # Mark as unresolved
-        'font_glyph_bracket',
+        'font_glyph_bracket_hex',
+        None
+    ),
+    
+    (
+        r'\[[A-Z]_\d{4,8}_\d+\]',
+        '?',  # Mark as unresolved
+        'font_glyph_bracket_numeric',
         None
     ),
     
