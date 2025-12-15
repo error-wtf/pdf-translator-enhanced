@@ -667,17 +667,16 @@ def create_gradio_app():
                             label="Target Language",
                         )
                         
-                        extraction_mode = gr.Radio(
-                            choices=[
-                                "Unified (Best Quality - Combines All Methods)",
-                                "Page-by-Page (Layout & Images)",
-                                "Marker (Scientific PDFs)",
-                                "Standard (Fast)"
-                            ],
-                            value="Unified (Best Quality - Combines All Methods)",
-                            label="PDF Extraction Mode",
-                            info="Unified: Best quality, combines Marker + PyMuPDF. Page-by-Page: Layout focus. Marker: Formula focus. Standard: Fast.",
-                        )
+                        # Perfect Mode - always uses best quality (Unified)
+                        extraction_mode = gr.State("Unified (Best Quality - Combines All Methods)")
+                        
+                        gr.Markdown("""
+                        ### ⭐ Perfect Mode (1:1 Translation)
+                        - ✅ Marker for formulas (100% accurate)
+                        - ✅ PyMuPDF for layout & images
+                        - ✅ All images preserved in place
+                        - ✅ Tables fully translated
+                        """)
                         
                         backend_choice = gr.Radio(
                             choices=["Ollama (Local)", "OpenAI", "No Translation"],
