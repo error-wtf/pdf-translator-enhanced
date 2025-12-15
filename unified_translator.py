@@ -321,111 +321,18 @@ def merge_extractions(marker_text: Optional[str], pymupdf_data: Dict) -> Dict:
     return result
 
 
-def protect_formulas(text: str) -> tuple[str, dict]:
+def protect_formulas(text: str) -> tuple[str, callable]:
     """
     Protect mathematical formulas and scientific notation from translation.
     
-    This is CRITICAL for scientific PDFs. The LLM must not touch:
-    - LaTeX math expressions
-    - Greek letters
-    - Mathematical operators
-    - Scientific notation
-    - Variable names with subscripts
-    - Unit expressions
+    Uses formula_isolator for robust ⟦FORMULA_xxx⟧ placeholders that
+    cannot be corrupted by LLMs.
     
-    Returns (protected_text, placeholders_dict)
+    Returns (protected_text, restore_function)
     """
-    protected = {}
-    counter = [0]
-    
-    def protect(match):
-        key = f"[[MATH_{counter[0]}]]"
-        protected[key] = match.group(0)
-        counter[0] += 1
-        return key
-    
-    # Patterns to protect (order matters - more specific first!)
-    patterns = [
-        # === LATEX ENVIRONMENTS (must be first) ===
-        r'\\begin\{equation\*?\}[\s\S]*?\\end\{equation\*?\}',
-        r'\\begin\{align\*?\}[\s\S]*?\\end\{align\*?\}',
-        r'\\begin\{eqnarray\*?\}[\s\S]*?\\end\{eqnarray\*?\}',
-        r'\\begin\{array\}[\s\S]*?\\end\{array\}',
-        r'\\begin\{matrix\}[\s\S]*?\\end\{matrix\}',
-        r'\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\}',
-        
-        # === LATEX DISPLAY MATH ===
-        r'\$\$[\s\S]*?\$\$',
-        r'\\\[[\s\S]*?\\\]',
-        
-        # === LATEX INLINE MATH ===
-        r'\$(?:[^$\\]|\\.)+\$',
-        r'\\\((?:[^\\]|\\.)*?\\\)',
-        
-        # === LATEX COMMANDS WITH BRACES ===
-        r'\\(?:frac|sqrt|vec|hat|bar|dot|ddot|tilde|mathbf|mathrm|mathcal|mathbb|text)\{[^}]*\}(?:\{[^}]*\})?',
-        r'\\[a-zA-Z]+\{[^}]*\}',
-        r'\\[a-zA-Z]+',
-        
-        # === EQUATIONS (inline) ===
-        # Schrodinger equation pattern: iħ∂Ψ/∂t = ĤΨ
-        r'[iℏħ]?\s*[∂∇]\s*[ΨΦψφ]\s*/\s*[∂∇]\s*[trxyz]',
-        r'[ĤĤH]\s*[ΨΦψφ]\s*=\s*[EeΕε]\s*[ΨΦψφ]',
-        
-        # === SCIENTIFIC NOTATION ===
-        r'\d+\.?\d*\s*[×x·]\s*10\s*\^?\s*[−\-+]?\s*\{?\s*[−\-+]?\d+\s*\}?',
-        r'\d+\.?\d*\s*[eE]\s*[−\-+]?\s*\d+',
-        r'10\s*\^?\s*[−\-+]?\s*\{?\s*[−\-+]?\d+\s*\}?',
-        
-        # === NUMBERS WITH UNITS ===
-        r'\d+\.?\d*\s*(?:Hz|kHz|MHz|GHz|THz|PHz|nm|μm|µm|mm|cm|dm|m|km|Å|nm|pm|fm|ns|μs|µs|ms|s|min|h|eV|keV|MeV|GeV|TeV|K|°C|°F|Pa|kPa|MPa|GPa|bar|atm|J|kJ|MJ|cal|kcal|W|kW|MW|GW|V|mV|kV|MV|A|mA|μA|Ω|kΩ|MΩ|F|μF|nF|pF|H|mH|μH|T|mT|G|mol|mmol|μmol|M|mM|μM|nM|L|mL|μL|g|mg|μg|kg|Da|kDa|rpm|dB|bit|byte|KB|MB|GB|TB)\b',
-        
-        # === MATH OPERATORS & SYMBOLS ===
-        r'[ℏħℓ℘ℜℑ∇∂∫∮∯∰∑∏∐√∛∜∞∅∃∀∈∉⊂⊃⊆⊇∪∩∧∨¬⊕⊗⊥∥†‡±∓×÷·∗≤≥≠≈≡≢∝≪≫∼≃≅≇∝∞°′″‴⁗]',
-        
-        # === GREEK LETTERS (single or sequences) ===
-        r'[αβγδεζηθικλμνξοπρσςτυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩϕϵϑϱϖ]+',
-        
-        # === MODIFIED LETTERS (hat, bar, dot, etc.) ===
-        r'[ĤĥĜĝŴŵŜŝÂâÊêÎîÔôÛû]',
-        
-        # === SUBSCRIPTS & SUPERSCRIPTS ===
-        r'[₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜ]+',
-        r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ]+',
-        r'_\{[^}]+\}',
-        r'\^\{[^}]+\}',
-        r'_[A-Za-z0-9]',
-        r'\^[A-Za-z0-9]',
-        
-        # === VARIABLE PATTERNS ===
-        r'\b[A-Za-z]_\{?[A-Za-z0-9,]+\}?\b',  # T_1, r_s, E_{kin}
-        r'\b[A-Za-z]\^?\{?[A-Za-z0-9,]+\}?\b',  # x^2, v^{max}
-        
-        # === ARROWS ===
-        r'[→←↔⇒⇐⇔↑↓↕⟶⟵⟷⟹⟸⟺]',
-        
-        # === REFERENCE PATTERNS ===
-        r'\b(?:Eq\.?|Eqs\.?|Equation|Fig\.?|Figure|Tab\.?|Table|Ref\.?|Sec\.?|Section)\s*[\(\[]?\s*\d+(?:\.\d+)*\s*[\)\]]?',
-        r'\[\d+(?:,\s*\d+)*\]',  # Citations [1], [1,2,3]
-    ]
-    
-    result = text
-    for pattern in patterns:
-        try:
-            result = re.sub(pattern, protect, result)
-        except re.error as e:
-            logger.warning(f"Regex error in pattern: {e}")
-    
-    logger.debug(f"Protected {len(protected)} math expressions")
-    return result, protected
-
-
-def restore_formulas(text: str, protected: dict) -> str:
-    """Restore protected formulas after translation."""
-    result = text
-    for key, value in protected.items():
-        result = result.replace(key, value)
-    return result
+    # Use the robust formula_isolator instead of simple placeholders
+    protected_text, restore_func = extract_and_protect(text)
+    return protected_text, restore_func
 
 
 def cleanup_llm_output(text: str) -> str:
@@ -479,8 +386,8 @@ def translate_text(text: str, model: str, target_language: str,
     """Translate text using Ollama or OpenAI, protecting formulas."""
     from pdf_marker_translator import translate_text_chunk
     
-    # Protect formulas before translation
-    protected_text, formulas = protect_formulas(text)
+    # Protect formulas before translation (returns restore function)
+    protected_text, restore_func = protect_formulas(text)
     
     # Translate
     translated = translate_text_chunk(protected_text, model, target_language, use_openai, openai_api_key)
@@ -488,8 +395,11 @@ def translate_text(text: str, model: str, target_language: str,
     # Clean up HTML/Markdown artifacts from LLM
     translated = cleanup_llm_output(translated)
     
-    # Restore formulas
-    result = restore_formulas(translated, formulas)
+    # Restore formulas using the restore function
+    result = restore_func(translated)
+    
+    # Normalize output for clean Unicode
+    result = normalize_output(result, mode="unicode")
     
     return result
 
