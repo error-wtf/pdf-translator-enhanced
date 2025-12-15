@@ -189,7 +189,8 @@ UNICODE_PATTERNS = [
     (r'(\d{4})\?(\d{4})', r'\1–\2', 'unicode_year_range'),
     
     # Broken dashes in ranges "10?15" when context suggests range
-    (r'(\d+)\?(\d+)\s*(GB|MB|KB|cm|mm|m|kg|s|Hz|MHz|GHz)', r'\1–\2 \3', 'unicode_numeric_range'),
+    # BUT NOT when followed by /s (that's a drift rate like 10^{-25} s/s)
+    (r'(\d+)\?(\d+)\s*(GB|MB|KB|cm|mm|m|kg|Hz|MHz|GHz)(?!/)', r'\1–\2 \3', 'unicode_numeric_range'),
 ]
 
 
@@ -293,11 +294,46 @@ SAFE_REPAIR_PATTERNS = [
     ),
     
     # ==========================================================================
-    # EXPONENT/SUPERSCRIPT ARTIFACTS (10?²?, 10^-2 broken)
+    # EXPONENT/SUPERSCRIPT ARTIFACTS - TABLE 3 SPECIFIC (Priority Order!)
     # ==========================================================================
     
+    # ==== RULE B2: Mantisse + × + 10-Potenz (zerhackt) ====
+    # "10?²?1.1×" or "10?²²1.1×" → "1.1 × 10^{-22}" (Table 3 pattern)
+    # Pattern: digits at end (exponent) + garbage + mantisse + ×
+    (
+        r'10\?[²¹⁰³⁴⁵⁶⁷⁸⁹\?\-−]+(\d{1,2})[.,]?(\d)?[×x]',
+        lambda m: f'{m.group(2) or "1"}.{m.group(1)[0] if len(m.group(1)) == 2 else "1"} × 10^{{-{m.group(1)}}}',
+        'table3_mantisse_exponent',
+        None
+    ),
+    
+    # Simpler: "10?²?1.1×" where 1.1 is before and exponent digits mixed in
+    (
+        r'(\d)[.,](\d)\s*[×x]\s*10\?[²¹⁰³⁴⁵⁶⁷⁸⁹\?\-−]*(\d{1,2})',
+        r'\1.\2 × 10^{-\3}',
+        'table3_standard_notation',
+        None
+    ),
+    
+    # ==== RULE B1: 10 + kaputter Exponent mit Ziffern ====
+    # "10?25 s/s" or "10?19 s/s" → "10^{-25} s/s" (Table 3 drift column)
+    # Must come BEFORE range patterns!
+    (
+        r'10\?(\d{2})\s*s/s',
+        r'10^{-\1} s/s',
+        'table3_drift_exponent',
+        None
+    ),
+    
+    # "10?25" without s/s (isolated in table cell)
+    (
+        r'\b10\?(\d{2})\b(?!\s*[a-zA-Z])',
+        r'10^{-\1}',
+        'table3_isolated_exponent',
+        None
+    ),
+    
     # "10?¹?" specifically → "10^{-19}" (SSZ context: always means 10^-19)
-    # Must come BEFORE the general superscript pattern
     (
         r'10\?¹\?',
         '10^{-19}',
@@ -305,32 +341,37 @@ SAFE_REPAIR_PATTERNS = [
         None
     ),
     
-    # "10?²?" or similar → "10²" (broken superscript with question marks)
-    # But NOT ¹ which is handled above as 10^{-19}
+    # "10?²?" or similar → "10^{-X}" based on superscript digit
     (
-        r'10\?([²³⁴⁵⁶⁷⁸⁹⁰])\?',
-        r'10\1',
-        'broken_superscript_10',
+        r'10\?([²])\?',
+        '10^{-2}',
+        'broken_superscript_10_2',
+        None
+    ),
+    (
+        r'10\?([⁵])\?',
+        '10^{-5}',
+        'broken_superscript_10_5',
         None
     ),
     
     # "(1,1?¹?)" or "(1,7?¹?)" → "(1.1×10^{-19})" - common SSZ pattern
     (
         r'\((\d),(\d)\?[¹²³⁴⁵⁶⁷⁸⁹⁰]+\?\)',
-        r'(\1.\2×10^{-19})',
+        r'(\1.\2 × 10^{-19})',
         'broken_ssz_exponent',
         None
     ),
     
-    # "1,1?¹?" without parens → "1.1×10^{-19}"
+    # "1,1?¹?" without parens → "1.1 × 10^{-19}"
     (
         r'(\d),(\d)\?[¹²³⁴⁵⁶⁷⁸⁹⁰]+\?',
-        r'\1.\2×10^{-19}',
+        r'\1.\2 × 10^{-19}',
         'broken_ssz_exponent_noparen',
         None
     ),
     
-    # "(10?¹?)" → "(10^{-19})" - isolated broken exponent (must come before general pattern)
+    # "(10?¹?)" → "(10^{-19})"
     (
         r'\(10\?¹\?\)',
         '(10^{-19})',
@@ -338,15 +379,7 @@ SAFE_REPAIR_PATTERNS = [
         None
     ),
     
-    # "10?¹?" without parens → "10^{-19}"
-    (
-        r'10\?¹\?',
-        '10^{-19}',
-        'broken_10_exponent_19',
-        None
-    ),
-    
-    # "10?−?19" or "10?-?19" → "10^-19" (negative exponent with double ?)
+    # "10?−?19" or "10?-?19" → "10^{-19}"
     (
         r'10\?[−\-]?\?(\d+)',
         r'10^{-\1}',
@@ -354,11 +387,28 @@ SAFE_REPAIR_PATTERNS = [
         None
     ),
     
-    # "10?-2?" → "10⁻²" (negative exponent with question marks)
+    # "10?-2?" → "10^{-2}"
     (
         r'10\?-(\d)\?',
         lambda m: f'10^{{-{m.group(1)}}}',
         'broken_negative_exponent',
+        None
+    ),
+    
+    # ==== UNITS RESOLVER ====
+    # "s?s" → "s/s" (broken unit separator)
+    (
+        r's\?s',
+        's/s',
+        'broken_unit_s_s',
+        None
+    ),
+    
+    # "s/ s" → "s/s" (extra space)
+    (
+        r's/\s+s',
+        's/s',
+        'unit_extra_space',
         None
     ),
     
@@ -1262,9 +1312,9 @@ def run_tests():
         ),
         (
             "Critical scale: 10?²? meters",
-            "10²",
+            "10^{-2}",  # In scientific context, broken superscripts are negative exponents
             RepairMode.SAFE_REPAIR,
-            "Broken superscript fix"
+            "Broken superscript fix (scientific context)"
         ),
         (
             "Range is 100?500 MHz for this experiment",
