@@ -381,6 +381,76 @@ def cleanup_llm_output(text: str) -> str:
     return text.strip()
 
 
+def sanitize_unicode(text: str) -> str:
+    """
+    Fix common Unicode extraction issues from PDFs.
+    
+    Fixes patterns like:
+    - 99,1?% → 99,1%
+    - ESO?Spektroskopie → ESO-Spektroskopie
+    - Seite?2 → Seite 2
+    - r*/r_s stays as-is (math notation)
+    """
+    if not text:
+        return text
+    
+    # Fix ? before % (99,1?% → 99,1%)
+    text = re.sub(r'\?(%)', r'\1', text)
+    
+    # Fix ? between word and number (Seite?2 → Seite 2)
+    text = re.sub(r'([a-zA-ZäöüÄÖÜß])\?(\d)', r'\1 \2', text)
+    
+    # Fix ? between two words (ESO?Spektroskopie → ESO-Spektroskopie)
+    text = re.sub(r'([a-zA-ZäöüÄÖÜß])\?([A-ZÄÖÜ][a-zäöüß])', r'\1-\2', text)
+    
+    # Fix standalone ? that should be space
+    text = re.sub(r'(\w)\?(\w)', r'\1 \2', text)
+    
+    # Remove orphan ? at start/end of words
+    text = re.sub(r'\?\s+', ' ', text)
+    text = re.sub(r'\s+\?', ' ', text)
+    
+    return text
+
+
+def apply_german_style(text: str) -> str:
+    """
+    Apply German scientific writing conventions.
+    
+    Converts:
+    - Figure 1 → Abbildung 1
+    - Fig. 1 → Abb. 1
+    - Table 1 → Tabelle 1
+    - Tab. 1 → Tab. 1 (already German)
+    - Equation → Gleichung
+    - Section → Abschnitt
+    """
+    if not text:
+        return text
+    
+    # Figure → Abbildung (full word)
+    text = re.sub(r'\bFigure\s+(\d+)', r'Abbildung \1', text)
+    text = re.sub(r'\bfigure\s+(\d+)', r'Abbildung \1', text)
+    
+    # Fig. → Abb.
+    text = re.sub(r'\bFig\.\s*(\d+)', r'Abb. \1', text)
+    text = re.sub(r'\bfig\.\s*(\d+)', r'Abb. \1', text)
+    
+    # Table → Tabelle
+    text = re.sub(r'\bTable\s+(\d+)', r'Tabelle \1', text)
+    text = re.sub(r'\btable\s+(\d+)', r'Tabelle \1', text)
+    
+    # Equation → Gleichung
+    text = re.sub(r'\bEquation\s+(\d+)', r'Gleichung \1', text)
+    text = re.sub(r'\bEq\.\s*(\d+)', r'Gl. \1', text)
+    
+    # Section → Abschnitt
+    text = re.sub(r'\bSection\s+(\d+)', r'Abschnitt \1', text)
+    text = re.sub(r'\bSec\.\s*(\d+)', r'Abschn. \1', text)
+    
+    return text
+
+
 def translate_text(text: str, model: str, target_language: str,
                    use_openai: bool = False, openai_api_key: str = None) -> str:
     """Translate text using Ollama or OpenAI, protecting formulas."""
@@ -400,6 +470,13 @@ def translate_text(text: str, model: str, target_language: str,
     
     # Normalize output for clean Unicode
     result = normalize_output(result, mode="unicode")
+    
+    # Sanitize Unicode extraction issues
+    result = sanitize_unicode(result)
+    
+    # Apply German style if target is German
+    if target_language.lower() in ["german", "deutsch", "de"]:
+        result = apply_german_style(result)
     
     return result
 
