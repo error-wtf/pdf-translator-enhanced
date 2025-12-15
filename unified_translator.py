@@ -473,6 +473,13 @@ def create_translated_page(
         
         text_rect = fitz.Rect(x0, y0, x1, y1)
         
+        # Replace problematic Unicode with ASCII equivalents
+        translated = translated.replace('●', '-').replace('■', '-').replace('•', '-')
+        translated = translated.replace('→', '->').replace('←', '<-').replace('↔', '<->')
+        translated = translated.replace('✓', '[x]').replace('✗', '[ ]').replace('✔', '[x]')
+        translated = translated.replace('★', '*').replace('☆', '*').replace('⭐', '*')
+        translated = translated.replace('📄', '').replace('📁', '').replace('🔄', '')
+        
         # Try insert_textbox first with auto-shrink
         try:
             rc = new_page.insert_textbox(
