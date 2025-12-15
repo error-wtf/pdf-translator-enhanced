@@ -261,7 +261,7 @@ SAFE_REPAIR_PATTERNS = [
     # ==========================================================================
     (
         r'\?[A-Z]_[a-f0-9]{4,8}_\d+\?',
-        '',  # Remove completely - these are garbage
+        '?',  # Mark as unresolved symbol (don't remove!)
         'font_glyph_placeholder',
         None
     ),
@@ -269,8 +269,26 @@ SAFE_REPAIR_PATTERNS = [
     # Variant: without leading/trailing ? but with brackets
     (
         r'\[[A-Z]_[a-f0-9]{4,8}_\d+\]',
-        '',
+        '?',  # Mark as unresolved
         'font_glyph_bracket',
+        None
+    ),
+    
+    # ==========================================================================
+    # SSZ HYPHEN ARTIFACTS (SSZ?Korrekturen → SSZ-Korrekturen)
+    # ==========================================================================
+    (
+        r'SSZ\?',
+        'SSZ-',
+        'ssz_hyphen_artifact',
+        None
+    ),
+    
+    # General word?word pattern (compound word with broken hyphen)
+    (
+        r'([A-ZÄÖÜ][a-zäöüß]+)\?([A-ZÄÖÜ][a-zäöüß]+)',
+        r'\1-\2',
+        'compound_word_hyphen',
         None
     ),
     
@@ -286,11 +304,44 @@ SAFE_REPAIR_PATTERNS = [
         None
     ),
     
+    # "10?−?19" or "10?-?19" → "10^-19" (negative exponent with double ?)
+    (
+        r'10\?[−\-]?\?(\d+)',
+        r'10^{-\1}',
+        'broken_negative_exponent_double',
+        None
+    ),
+    
     # "10?-2?" → "10⁻²" (negative exponent with question marks)
     (
         r'10\?-(\d)\?',
-        lambda m: f'10⁻{"⁰¹²³⁴⁵⁶⁷⁸⁹"[int(m.group(1))]}',
+        lambda m: f'10^{{-{m.group(1)}}}',
         'broken_negative_exponent',
+        None
+    ),
+    
+    # "(10{-19})" → "(10^{-19})" (missing caret in LaTeX exponent)
+    (
+        r'\(10\{(-?\d+)\}\)',
+        r'(10^{\1})',
+        'missing_caret_exponent',
+        None
+    ),
+    
+    # "10{-19}" standalone → "10^{-19}"
+    (
+        r'(?<!\^)10\{(-?\d+)\}',
+        r'10^{\1}',
+        'missing_caret_standalone',
+        None
+    ),
+    
+    # "(1.1^{-19})" → keep as is (already correct pattern)
+    # But fix "(1.1{-19})" → "(1.1×10^{-19})" - likely meant scientific notation
+    (
+        r'\((\d+\.?\d*)\{(-\d+)\}\)',
+        r'(\1×10^{\2})',
+        'broken_scientific_notation_paren',
         None
     ),
     
@@ -299,6 +350,14 @@ SAFE_REPAIR_PATTERNS = [
         r'[×x]\s*10\?\s*(\d+)',
         r'×10^\1',
         'broken_scientific_notation',
+        None
+    ),
+    
+    # "× 10-14" → "×10^{-14}" (space and missing caret)
+    (
+        r'×\s*10-(\d+)',
+        r'×10^{-\1}',
+        'scientific_notation_missing_caret',
         None
     ),
     
@@ -319,6 +378,58 @@ SAFE_REPAIR_PATTERNS = [
         r'(\d+)\?(\d+)\s*(K|Hz|MHz|GHz|nm|μm|mm|cm|m|km|eV|keV|MeV|GeV|TeV)',
         r'\1–\2 \3',
         'broken_range_with_unit',
+        None
+    ),
+    
+    # ==========================================================================
+    # BROKEN LATEX/MATH FRAGMENTS (from PDF extraction)
+    # ==========================================================================
+    
+    # "[.|{r=R{}} {-16},{-1},]" → completely broken, mark as UNRESOLVED
+    (
+        r'\[\.\|\{[^]]{10,50}\}\]',
+        '[[FORMEL]]',
+        'broken_latex_fragment',
+        None
+    ),
+    
+    # "[D = D_SSZ..." broken inline math with square brackets
+    (
+        r'\[([A-Za-z_]+\s*=\s*[^]]{5,100})\]',
+        r'$\1$',
+        'bracket_to_math',
+        None
+    ),
+    
+    # "$$[..." → "$" (double dollar with bracket)
+    (
+        r'\$\$\[',
+        '$',
+        'double_dollar_bracket',
+        None
+    ),
+    
+    # "]\$\$" → "$" (closing bracket with double dollar)
+    (
+        r'\]\$\$',
+        '$',
+        'bracket_double_dollar',
+        None
+    ),
+    
+    # "(^{10})" → "(10^{10})" - missing base for exponent
+    (
+        r'\(\^(\{[^}]+\})\)',
+        r'(10^\1)',
+        'missing_exponent_base',
+        None
+    ),
+    
+    # "m({-1})" → "m^{-1}" - unit with broken exponent
+    (
+        r'([a-zA-Z])\(\{(-?\d+)\}\)',
+        r'\1^{\2}',
+        'unit_broken_exponent',
         None
     ),
     
@@ -1092,12 +1203,12 @@ def run_tests():
             RepairMode.SAFE_REPAIR,
             "Protected math block (should not modify)"
         ),
-        # NEW: Font glyph placeholder tests
+        # NEW: Font glyph placeholder tests (marked with ? instead of removed)
         (
             "The value is ?F_afec5f_0? approximately 10.",
-            "The value is  approximately 10.",
+            "The value is ? approximately 10.",
             RepairMode.SAFE_REPAIR,
-            "Font glyph placeholder removal"
+            "Font glyph placeholder marker"
         ),
         (
             "Critical scale: 10?²? meters",
@@ -1141,6 +1252,31 @@ def run_tests():
             "ESO-Spektroskopie",
             RepairMode.SAFE_REPAIR,
             "Step 2: Replacement char in compound → hyphen"
+        ),
+        # NEW: PDF-specific patterns from paper a translated.pdf
+        (
+            "SSZ?Korrekturen sind wichtig",
+            "SSZ-Korrekturen",
+            RepairMode.SAFE_REPAIR,
+            "SSZ hyphen artifact"
+        ),
+        (
+            "Zeit?Dilatation gemessen",
+            "Zeit-Dilatation",
+            RepairMode.SAFE_REPAIR,
+            "Compound word hyphen artifact"
+        ),
+        (
+            "Wert (10{-19}) ist klein",
+            "(10^{-19})",
+            RepairMode.SAFE_REPAIR,
+            "Missing caret in exponent"
+        ),
+        (
+            "× 10-14 Sekunden",
+            "×10^{-14}",
+            RepairMode.SAFE_REPAIR,
+            "Scientific notation missing caret"
         ),
     ]
     
