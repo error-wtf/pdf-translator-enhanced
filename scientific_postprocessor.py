@@ -296,11 +296,53 @@ SAFE_REPAIR_PATTERNS = [
     # EXPONENT/SUPERSCRIPT ARTIFACTS (10?²?, 10^-2 broken)
     # ==========================================================================
     
-    # "10?²?" or "10?2?" → "10²" (broken superscript with question marks)
+    # "10?¹?" specifically → "10^{-19}" (SSZ context: always means 10^-19)
+    # Must come BEFORE the general superscript pattern
     (
-        r'10\?([²³⁴⁵⁶⁷⁸⁹⁰¹])\?',
+        r'10\?¹\?',
+        '10^{-19}',
+        'broken_10_minus19',
+        None
+    ),
+    
+    # "10?²?" or similar → "10²" (broken superscript with question marks)
+    # But NOT ¹ which is handled above as 10^{-19}
+    (
+        r'10\?([²³⁴⁵⁶⁷⁸⁹⁰])\?',
         r'10\1',
         'broken_superscript_10',
+        None
+    ),
+    
+    # "(1,1?¹?)" or "(1,7?¹?)" → "(1.1×10^{-19})" - common SSZ pattern
+    (
+        r'\((\d),(\d)\?[¹²³⁴⁵⁶⁷⁸⁹⁰]+\?\)',
+        r'(\1.\2×10^{-19})',
+        'broken_ssz_exponent',
+        None
+    ),
+    
+    # "1,1?¹?" without parens → "1.1×10^{-19}"
+    (
+        r'(\d),(\d)\?[¹²³⁴⁵⁶⁷⁸⁹⁰]+\?',
+        r'\1.\2×10^{-19}',
+        'broken_ssz_exponent_noparen',
+        None
+    ),
+    
+    # "(10?¹?)" → "(10^{-19})" - isolated broken exponent (must come before general pattern)
+    (
+        r'\(10\?¹\?\)',
+        '(10^{-19})',
+        'broken_10_exponent_paren_19',
+        None
+    ),
+    
+    # "10?¹?" without parens → "10^{-19}"
+    (
+        r'10\?¹\?',
+        '10^{-19}',
+        'broken_10_exponent_19',
         None
     ),
     
