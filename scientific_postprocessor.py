@@ -385,11 +385,19 @@ SAFE_REPAIR_PATTERNS = [
     # BROKEN LATEX/MATH FRAGMENTS (from PDF extraction)
     # ==========================================================================
     
-    # "[.|{r=R{}} {-16},{-1},]" → completely broken, mark as UNRESOLVED
+    # "[.|{r=R{}}{-16},{-1},]" → completely broken, mark as formula placeholder
     (
-        r'\[\.\|\{[^]]{10,50}\}\]',
+        r'\[\.\|\{[^\]]{5,80}\]',
+        '[[FORMEL: dΞ/dr]]',
+        'broken_latex_fragment_1',
+        None
+    ),
+    
+    # Generic broken bracket patterns with curly braces inside
+    (
+        r'\[\{[^\]]{10,100}\}\]',
         '[[FORMEL]]',
-        'broken_latex_fragment',
+        'broken_latex_fragment_2',
         None
     ),
     
