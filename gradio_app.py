@@ -30,6 +30,22 @@ from ollama_backend import (
     get_vram_recommendations,
     detect_gpu_vram,
 )
+
+# OpenAI Backend (optional)
+try:
+    from openai_backend import (
+        check_openai_available,
+        get_openai_models,
+        translate_text_openai,
+        set_api_key,
+        get_openai_status,
+        OPENAI_AVAILABLE,
+    )
+except ImportError:
+    OPENAI_AVAILABLE = False
+    check_openai_available = lambda: False
+    get_openai_models = lambda: []
+    get_openai_status = lambda: "OpenAI not available"
 from pdf_overlay_translator import translate_pdf_overlay
 from docx_translator import translate_docx
 from latex_translator import translate_latex_file
@@ -86,7 +102,7 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
             choices.append((label, model_id))
             seen.add(model_id)
     
-    # 3. THIRD: Add cloud models
+    # 3. THIRD: Add cloud models (Ollama)
     cloud_models = [
         ("☁️ gpt-oss:20b-cloud", "gpt-oss:20b-cloud"),
         ("☁️ gpt-oss:120b-cloud", "gpt-oss:120b-cloud"),
@@ -99,7 +115,20 @@ def get_model_choices(vram_gb: int) -> List[Tuple[str, str]]:
             choices.append((label, model_id))
             seen.add(model_id)
     
+    # 4. FOURTH: Add OpenAI models (if available)
+    if OPENAI_AVAILABLE:
+        openai_models = get_openai_models()
+        for label, model_id in openai_models:
+            if model_id not in seen:
+                choices.append((label, model_id))
+                seen.add(model_id)
+    
     return choices if choices else [("qwen2.5:7b", "qwen2.5:7b")]
+
+
+def is_openai_model(model_id: str) -> bool:
+    """Check if a model ID is an OpenAI model."""
+    return model_id in ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
 
 
 def check_ollama_status() -> str:
@@ -162,9 +191,17 @@ def translate_document(
     if not ollama_model:
         return None, "Please select a model."
     
-    # Check if model is installed
-    if not is_model_installed(ollama_model):
-        return None, f"Model '{ollama_model}' not installed. Click 'Download Model'."
+    # Check if OpenAI model
+    using_openai = is_openai_model(ollama_model)
+    
+    if using_openai:
+        # Check OpenAI API key
+        if not check_openai_available():
+            return None, "OpenAI API key not set. Enter your API key in the settings."
+    else:
+        # Check if Ollama model is installed
+        if not is_model_installed(ollama_model):
+            return None, f"Model '{ollama_model}' not installed. Click 'Download Model'."
     
     try:
         # Create output directory
@@ -387,6 +424,28 @@ def create_gradio_app():
                 with gr.Row():
                     refresh_btn = gr.Button("Check Status", size="sm")
                     pull_btn = gr.Button("Download Model", size="sm")
+                
+                # OpenAI Settings
+                with gr.Accordion("🔑 OpenAI API (optional)", open=False):
+                    openai_status = gr.Textbox(
+                        value=get_openai_status(),
+                        label="OpenAI Status",
+                        interactive=False,
+                    )
+                    openai_key = gr.Textbox(
+                        label="OpenAI API Key",
+                        placeholder="sk-...",
+                        type="password",
+                    )
+                    set_key_btn = gr.Button("Set API Key", size="sm")
+                    
+                    def on_set_key(key):
+                        if not key:
+                            return "No key provided"
+                        success, msg = set_api_key(key)
+                        return msg
+                    
+                    set_key_btn.click(on_set_key, [openai_key], [openai_status])
                 
                 translate_btn = gr.Button("Translate", variant="primary", size="lg")
             

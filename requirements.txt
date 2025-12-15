@@ -19,3 +19,6 @@ langdetect>=1.0.9
 # === Optional: OCR for images ===
 pytesseract>=0.3.10
 Pillow>=10.0.0
+
+# === Optional: OpenAI API ===
+openai>=1.0.0
