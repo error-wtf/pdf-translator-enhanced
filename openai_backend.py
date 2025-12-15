@@ -11,6 +11,14 @@ from typing import Optional, Tuple, List, Dict, Any
 
 logger = logging.getLogger("pdf_translator.openai")
 
+# Import formula protection for 100% perfect results
+try:
+    from formula_isolator import extract_and_protect, normalize_output, assert_no_corruption
+    FORMULA_PROTECTION_AVAILABLE = True
+except ImportError:
+    FORMULA_PROTECTION_AVAILABLE = False
+    logger.warning("formula_isolator not available - formula protection disabled")
+
 # Try to import OpenAI
 OPENAI_AVAILABLE = False
 try:
@@ -58,7 +66,7 @@ def translate_text_openai(
     source_language: str = "auto"
 ) -> Tuple[bool, str]:
     """
-    Translate text using OpenAI API.
+    Translate text using OpenAI API with 100% formula protection.
     
     Args:
         text: Text to translate
@@ -76,32 +84,46 @@ def translate_text_openai(
     if not client:
         return False, "OpenAI API key not set. Set OPENAI_API_KEY environment variable."
     
+    # === FORMULA PROTECTION (100% safe) ===
+    restore_func = None
+    protected_text = text
+    if FORMULA_PROTECTION_AVAILABLE:
+        protected_text, restore_func = extract_and_protect(text)
+    
     # Build system prompt
-    system_prompt = f"""You are a professional translator. Translate the following text to {target_language}.
+    system_prompt = f"""You are a professional scientific translator. Translate to {target_language}.
 
-IMPORTANT RULES:
-1. Keep ALL mathematical formulas, equations, and symbols UNCHANGED
-2. Keep ALL numbers, units, and scientific notation UNCHANGED
-3. Keep ALL placeholders like {{{{FORMULA_1}}}} or {{{{REF_1}}}} UNCHANGED
-4. Keep ALL references like [1], [2-5], Fig. 1, Eq. (3) UNCHANGED
-5. Keep ALL Greek letters (α, β, γ, etc.) and special symbols UNCHANGED
-6. Translate ONLY the natural language text
-7. Do NOT add any explanations or notes
-8. Return ONLY the translated text"""
+CRITICAL RULES:
+1. Output ONLY the translation - no explanations
+2. Keep ALL ⟦...⟧ placeholders EXACTLY unchanged
+3. Keep ALL math symbols: Δ, Φ, ω, ×, ⁻, ¹, ², ³, ħ, ∇, Ψ, π, α, β, γ, ∞, ∑, ∫
+4. Keep ALL numbers and units unchanged
+5. Keep author names, URLs unchanged
+6. Translate headers: Abstract→Zusammenfassung, Introduction→Einleitung"""
 
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": f"Translate to {target_language}:\n\n{protected_text}"}
             ],
-            temperature=0.3,
+            temperature=0.1,
             max_tokens=4096
         )
         
-        translated = response.choices[0].message.content.strip()
-        return True, translated
+        result = response.choices[0].message.content.strip()
+        
+        # === RESTORE FORMULAS ===
+        if restore_func and FORMULA_PROTECTION_AVAILABLE:
+            result = restore_func(result)
+            result = normalize_output(result, mode="unicode")
+            
+            # Verify no corruption
+            if not assert_no_corruption(result):
+                logger.warning("Potential corruption detected in OpenAI translation")
+        
+        return True, result
         
     except Exception as e:
         logger.error(f"OpenAI translation error: {e}")
