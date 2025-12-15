@@ -31,6 +31,7 @@ import fitz  # PyMuPDF
 from text_normalizer import normalize_text, normalize_and_reflow, count_garbage_chars
 from caption_anchoring import anchor_captions_to_images, sort_blocks_reading_order, AnchoredFigure
 from table_detector import detect_tables_in_page, DetectedTable
+from scientific_postprocessor import ScientificPostProcessor, RepairMode
 
 # Import enhanced formula protection
 from formula_isolator import (
@@ -490,7 +491,8 @@ def create_translated_page(
     model: str,
     use_openai: bool = False,
     openai_api_key: str = None,
-    progress_callback=None
+    progress_callback=None,
+    repair_mode: str = "safe_repair"
 ) -> bool:
     """Create a translated PDF page with original layout."""
     
@@ -536,6 +538,11 @@ def create_translated_page(
         
         if not translated or not translated.strip():
             translated = block["text"]  # Keep original if translation failed
+        
+        # Apply scientific post-processing
+        mode = RepairMode.SAFE_REPAIR if repair_mode == "safe_repair" else RepairMode.STRICT
+        postprocessor = ScientificPostProcessor(mode)
+        translated, _ = postprocessor.process(translated)
         
         # Calculate font size - start with original, but allow shrinking
         font_size = min(block["font_size"], 10)
@@ -731,7 +738,8 @@ def translate_pdf_unified(
     target_language: str,
     progress_callback=None,
     use_openai: bool = False,
-    openai_api_key: str = None
+    openai_api_key: str = None,
+    repair_mode: str = "safe_repair"
 ) -> Tuple[Optional[str], str]:
     """
     Unified translation pipeline - combines all methods for best results.
@@ -835,7 +843,8 @@ def translate_pdf_unified(
                 model,
                 use_openai,
                 openai_api_key,
-                page_block_progress
+                page_block_progress,
+                repair_mode
             )
             
             if success and translated_page_path.exists():

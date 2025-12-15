@@ -462,6 +462,7 @@ def translate_pdf(
     ollama_model: str,
     latex_source_dir: str = "",
     progress=gr.Progress(),
+    repair_mode: str = "safe_repair",
 ) -> Tuple[Optional[str], str]:
     """
     Main function: Translate PDF or LaTeX file.
@@ -548,7 +549,8 @@ def translate_pdf(
                 target_language,
                 progress_callback=lambda c, t, s: progress(c / 100, desc=s),
                 use_openai=use_openai,
-                openai_api_key=openai_api_key
+                openai_api_key=openai_api_key,
+                repair_mode=repair_mode
             )
             return output_path, status
         
@@ -692,6 +694,17 @@ def create_gradio_app():
                             choices=list(LANGUAGES.keys()),
                             value="English",
                             label="Target Language",
+                        )
+                        
+                        # Scientific Post-Processing Mode
+                        repair_mode = gr.Radio(
+                            choices=[
+                                ("Safe Repair (fix extraction artifacts)", "safe_repair"),
+                                ("Strict (preserve 1:1, no repairs)", "strict"),
+                            ],
+                            value="safe_repair",
+                            label="Post-Processing Mode",
+                            info="Safe Repair fixes PDF extraction glitches (e.g. 'For r r*' → 'For r < r*')"
                         )
                         
                         # Perfect Mode - always uses best quality (Unified)
@@ -840,11 +853,12 @@ def create_gradio_app():
                     outputs=[ollama_status],
                 )
                 
-                def translate_and_prepare_download(pdf_file, target_language, extraction_mode, backend, openai_api_key, ollama_model, latex_source_dir, progress=gr.Progress()):
+                def translate_and_prepare_download(pdf_file, target_language, extraction_mode, backend, openai_api_key, ollama_model, latex_source_dir, repair_mode_val, progress=gr.Progress()):
                     """Wrapper that also prepares download button."""
                     output_path, status = translate_pdf(
                         pdf_file, target_language, extraction_mode, backend, 
-                        openai_api_key, ollama_model, latex_source_dir, progress
+                        openai_api_key, ollama_model, latex_source_dir, progress,
+                        repair_mode=repair_mode_val
                     )
                     
                     if output_path and Path(output_path).exists():
@@ -855,7 +869,7 @@ def create_gradio_app():
                 
                 translate_btn.click(
                     translate_and_prepare_download,
-                    inputs=[pdf_input, target_lang, extraction_mode, backend_choice, openai_key, ollama_model_select, latex_source_dir],
+                    inputs=[pdf_input, target_lang, extraction_mode, backend_choice, openai_key, ollama_model_select, latex_source_dir, repair_mode],
                     outputs=[output_file, status_output, download_btn],
                 )
             

@@ -10,6 +10,7 @@ Features:
 - Header row detection
 - Multi-language caption support
 - Merged cell handling
+- Tables-first hardening (grid detection, cell stitching, artifact repair)
 
 © 2025 Sven Kalinowski with small help of Lino Casu
 Licensed under the Anti-Capitalist Software License v1.4
@@ -25,6 +26,18 @@ from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("pdf_translator.table_detector")
+
+# Import table hardening module
+try:
+    from table_hardening import (
+        harden_table, TableArtifactResolver, GridDetector, 
+        CellStitcher, StitchedCell, CellToken
+    )
+    TABLE_HARDENING_AVAILABLE = True
+    logger.info("Table hardening module loaded")
+except ImportError:
+    TABLE_HARDENING_AVAILABLE = False
+    logger.debug("Table hardening module not available")
 
 
 # =============================================================================
@@ -649,9 +662,49 @@ def detect_tables_in_page(
     # Build remaining blocks list
     remaining = [b for i, b in enumerate(blocks) if i not in used_block_indices]
     
+    # Apply table hardening if available
+    if TABLE_HARDENING_AVAILABLE and detected_tables:
+        detected_tables = [harden_detected_table(t) for t in detected_tables]
+    
     logger.info(f"Detected {len(detected_tables)} tables, {len(remaining)} remaining blocks")
     
     return detected_tables, remaining
+
+
+# =============================================================================
+# TABLE HARDENING INTEGRATION
+# =============================================================================
+
+def harden_detected_table(table: DetectedTable) -> DetectedTable:
+    """
+    Apply table hardening to repair artifacts in cell content.
+    
+    Uses the TableArtifactResolver from table_hardening module.
+    """
+    if not TABLE_HARDENING_AVAILABLE:
+        return table
+    
+    resolver = TableArtifactResolver()
+    
+    for cell in table.cells:
+        # Create a StitchedCell for the resolver
+        stitched = StitchedCell(
+            row=cell.row,
+            col=cell.col,
+            text=cell.text,
+            tokens=[],
+            is_header=cell.is_header,
+            is_numeric=bool(re.match(r'^[\d.,\-−+×]+', cell.text))
+        )
+        
+        # Apply repairs
+        resolved = resolver.resolve_cell(stitched)
+        cell.text = resolved.text
+    
+    logger.debug(f"Table hardening: {resolver.fixes_applied} fixes, "
+                 f"{resolver.unresolved_count} unresolved")
+    
+    return table
 
 
 # =============================================================================
@@ -659,13 +712,16 @@ def detect_tables_in_page(
 # =============================================================================
 
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    
     print("=== Table Detector Test ===\n")
     
     # Check ML availability
     if is_tatr_available():
-        print("✅ Table Transformer is available")
+        print("[OK] Table Transformer is available")
     else:
-        print("ℹ️ Table Transformer not available (using heuristics only)")
+        print("[INFO] Table Transformer not available (using heuristics only)")
     
     # Test with sample data
     test_blocks = [
