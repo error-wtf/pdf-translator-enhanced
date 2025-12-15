@@ -39,6 +39,7 @@ from latex_translator import translate_latex_file
 from pdf_marker_translator import translate_pdf_with_marker
 from page_by_page_translator import translate_pdf_page_by_page
 from unified_translator import translate_pdf_unified
+from docx_translator import translate_docx
 from uuid import uuid4
 from datetime import datetime
 
@@ -469,10 +470,12 @@ def translate_pdf(
         Tuple[Optional[str], str]: (Path to output file or None, Status message)
     """
     if pdf_file is None:
-        return None, "❌ Please upload a PDF or .tex file!"
+        return None, "❌ Please upload a PDF, DOCX, or .tex file!"
     
-    # Check if it's a LaTeX file
-    is_latex = pdf_file.name.lower().endswith('.tex')
+    # Check file type
+    file_lower = pdf_file.name.lower()
+    is_latex = file_lower.endswith('.tex')
+    is_docx = file_lower.endswith('.docx')
     use_marker = "Marker" in extraction_mode
     
     # Backend validation
@@ -507,6 +510,30 @@ def translate_pdf(
                 use_openai, openai_api_key, use_ollama, ollama_model, 
                 latex_source_dir, progress
             )
+        
+        # Handle DOCX files directly
+        if is_docx:
+            if not use_ollama and not use_openai:
+                return None, "❌ DOCX translation requires Ollama or OpenAI backend."
+            progress(0.02, desc="Starting DOCX translation...")
+            import shutil
+            docx_path = job_dir / "input.docx"
+            shutil.copy(pdf_file.name, docx_path)
+            output_docx = job_dir / f"translated_{Path(pdf_file.name).stem}.docx"
+            
+            result = translate_docx(
+                str(docx_path),
+                str(output_docx),
+                ollama_model if use_ollama else "",
+                target_language,
+                progress_callback=lambda c, t, s: progress(c / 100, desc=s)
+            )
+            success = result.success
+            
+            if success and output_docx.exists():
+                return str(output_docx), f"✅ DOCX translated! Output: {output_docx.name}"
+            else:
+                return None, "❌ DOCX translation failed!"
         
         # Use Unified mode for best quality (combines all methods)
         use_unified = "Unified" in extraction_mode
@@ -649,8 +676,8 @@ def create_gradio_app():
                 with gr.Row():
                     with gr.Column(scale=1):
                         pdf_input = gr.File(
-                            label="Upload PDF or LaTeX",
-                            file_types=[".pdf", ".tex"],
+                            label="Upload PDF, DOCX, or LaTeX",
+                            file_types=[".pdf", ".docx", ".tex"],
                             type="filepath",
                         )
                         
