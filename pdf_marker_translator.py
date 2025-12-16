@@ -428,6 +428,12 @@ def translate_text_chunk(text: str, model: str, target_language: str, use_openai
     if not text.strip():
         return text
     
+    # PASSTHROUGH MODE: If target is "PASSTHROUGH" or "Original", return text unchanged
+    # This is for testing the pipeline without translation
+    if target_language.upper() in ["PASSTHROUGH", "ORIGINAL", "NONE", "ENGLISH"]:
+        logger.debug(f"Passthrough mode: returning original text")
+        return text
+    
     # Skip if mostly placeholders
     placeholder_count = text.count('__PROTECTED_')
     if placeholder_count > len(text.split()) / 2:

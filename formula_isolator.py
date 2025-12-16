@@ -57,6 +57,14 @@ def is_placeholder(text: str) -> bool:
 
 # Ordered by specificity (most specific first to avoid partial matches)
 FORMULA_PATTERNS = [
+    # Equation numbers - MUST preserve (1), (2), (3) etc at end of equations
+    (r'\(\d+\)$', 'eq_number'),  # Equation number at end of line
+    (r'\(\d+[a-z]?\)', 'eq_number'),  # Equation number like (3a)
+    
+    # References - protect [4, 33], [43], etc.
+    (r'\[\d+(?:,\s*\d+)*\]', 'reference'),  # [4, 33] or [43]
+    (r'\[\d+[-–]\d+\]', 'reference_range'),  # [4-10]
+    
     # Display math environments (must come before simpler patterns)
     (r'\\begin\{equation\*?\}.*?\\end\{equation\*?\}', 'equation'),
     (r'\\begin\{align\*?\}.*?\\end\{align\*?\}', 'align'),
@@ -87,6 +95,25 @@ FORMULA_PATTERNS = [
 # These patterns protect Unicode math symbols that get destroyed during translation
 
 UNICODE_MATH_PATTERNS = [
+    # CRITICAL: Protect INDIVIDUAL Greek letters and math symbols from LLM corruption
+    # These get destroyed during translation (Ψ → · or Ψ → Psi)
+    (r'[ΨΦψφϕ](?:\s*\([^)]+\))?', 'wavefunction'),  # Ψ, Ψ(r,t), φ, etc.
+    (r'[ℏħ]', 'hbar'),  # Reduced Planck constant
+    (r'[ĤĥĜĝŴŵ]', 'hat_operator'),  # Hamiltonian etc.
+    
+    # EFFECTIVE MASS notation: m∗, m*, ρ∗, etc. (letter + asterisk)
+    (r'[a-zA-Z][∗*]', 'starred_var'),  # m∗, ρ∗, etc.
+    (r'[a-zA-Z]_\{?[a-zA-Z0-9,]+\}?\s*[∗*]', 'subscript_starred'),  # m_q∗
+    
+    # Fractions like 1/2, 3/2, F1/2
+    (r'[A-Za-z]?[−\-]?\d+/\d+', 'fraction'),  # F1/2, -1/2, 3/2
+    
+    # Variable with subscript notation: ρc, Tc, mq, etc.
+    (r'[a-zA-Zρσδκπ][₀₁₂₃₄₅₆₇₈₉ₐₑₒₓₕₖₗₘₙₚₛₜ]+', 'var_subscript'),
+    
+    (r'[αβγδεζηθικλμνξπρστυχω]', 'greek_lower'),  # Individual Greek lowercase
+    (r'[ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ]', 'greek_upper'),  # Individual Greek uppercase
+    
     # Physics equations with Unicode (e.g., Schrödinger: iħ∂Ψ/∂t = ĤΨ)
     (r'[iℏħ]\s*[∂∇]\s*[ΨΦψφ]\s*/\s*[∂∇]\s*[trxyz]', 'schrodinger'),
     (r'[ĤĥH]\s*[ΨΦψφ]\s*[=]\s*[EΕε]\s*[ΨΦψφ]', 'eigenvalue'),

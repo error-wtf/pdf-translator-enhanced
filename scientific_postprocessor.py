@@ -23,6 +23,21 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
+# Import Table 3 Gold Standard processor
+try:
+    from table3_gold_standard import Table3Processor, TABLE3_EXPECTED_EXPONENTS
+    HAS_TABLE3_GOLD = True
+except ImportError:
+    HAS_TABLE3_GOLD = False
+    TABLE3_EXPECTED_EXPONENTS = {25, 22, 21, 20, 19, 17, 16, 15}
+
+# Import Quantum Symbol Resolver
+try:
+    from quantum_symbol_resolver import QuantumSymbolResolver, repair_physics_symbols
+    HAS_QUANTUM_RESOLVER = True
+except ImportError:
+    HAS_QUANTUM_RESOLVER = False
+
 logger = logging.getLogger("pdf_translator.scientific_postprocessor")
 
 
@@ -412,6 +427,24 @@ SAFE_REPAIR_PATTERNS = [
     ),
     
     # ==== UNITS RESOLVER ====
+    # ==== SCIENTIFIC NOTATION MULTIPLICATION FIX ====
+    # "1,1 ? 10^{-25}" or "1.1 ? 10^{-25}" → "1.1 x 10^{-25}"
+    # The ? is a broken multiplication sign from LLM translation
+    (
+        r'(\d)[,.](\d)\s*\?\s*10\^',
+        r'\1.\2 x 10^',
+        'broken_multiplication_sign',
+        None
+    ),
+    
+    # "1,1?10^{-25}" without space → "1.1 x 10^{-25}"
+    (
+        r'(\d)[,.](\d)\?10\^',
+        r'\1.\2 x 10^',
+        'broken_multiplication_nospace',
+        None
+    ),
+    
     # "s?s" → "s/s" (broken unit separator)
     (
         r's\?s',
@@ -1136,6 +1169,18 @@ class ScientificPostProcessor:
             text = apply_safe_repairs(text, report)
             text = repair_figure_references(text, report)
             
+            # Step 2.5: Apply Quantum/Physics symbol repairs (Schrödinger, etc.)
+            if HAS_QUANTUM_RESOLVER:
+                qm_resolver = QuantumSymbolResolver()
+                text, qm_fixes = qm_resolver.resolve_all(text)
+                for fix in qm_fixes.get('fixes', []):
+                    report.add_action(RepairAction(
+                        rule_name=f"qm_{fix.get('rule', 'unknown')}",
+                        original=fix.get('original', ''),
+                        fixed=fix.get('fixed', ''),
+                        context=fix.get('context', '')[:50]
+                    ))
+            
             # Step 3: Apply 5-step resolve pipeline for remaining corruptions
             resolver = CorruptionResolver()
             text = resolver.resolve(text, report)
@@ -1418,6 +1463,84 @@ def run_tests():
     print("\n" + "=" * 60)
     print(f"Overall: {'ALL PASSED ✅' if all_passed else 'SOME FAILED ❌'}")
     print("=" * 60)
+
+
+# =============================================================================
+# QUANTUM SYMBOL RESOLVER INTEGRATION
+# =============================================================================
+
+def process_physics_content(text: str) -> Tuple[str, Dict]:
+    """
+    Process text with physics/QM symbol repairs.
+    
+    Handles:
+    - Greek letters (ψ, ℏ, ∇, etc.)
+    - Operators (Ĥ, ∇², ∂, etc.)
+    - Schrödinger equation patterns
+    - Compound word hyphens
+    
+    Returns:
+        Tuple of (fixed_text, report_dict)
+    """
+    if HAS_QUANTUM_RESOLVER:
+        return repair_physics_symbols(text)
+    else:
+        logger.warning("Quantum Symbol Resolver not available")
+        return text, {'fallback': True}
+
+
+# =============================================================================
+# TABLE 3 GOLD STANDARD INTEGRATION
+# =============================================================================
+
+def process_table3_content(text: str) -> Tuple[str, Dict]:
+    """
+    Process text using Table 3 Gold Standard rules.
+    
+    This function specifically handles SSZ paper Table 3 patterns:
+    - Broken exponents (10?²?, 10?25, etc.)
+    - Scientific notation with broken separators
+    - Drift column patterns (10?25 s/s)
+    - Unit corruption (s?s → s/s)
+    
+    Returns:
+        Tuple of (fixed_text, report_dict)
+    """
+    if HAS_TABLE3_GOLD:
+        processor = Table3Processor()
+        return processor.process_text(text)
+    else:
+        # Fallback: basic pattern fixes
+        logger.warning("Table3 Gold Standard module not available, using basic fixes")
+        
+        # Basic exponent fixes
+        text = re.sub(r'10\?(\d{2})\s*s/s', r'10^{-\1} s/s', text)
+        text = re.sub(r's\?s', 's/s', text)
+        
+        return text, {'fallback': True}
+
+
+def validate_table3(rows: List[List[str]]) -> Dict:
+    """
+    Validate Table 3 against gold standard.
+    
+    Returns validation report with:
+    - passed: bool
+    - checks: dict of check results
+    - errors: list of error messages
+    """
+    if HAS_TABLE3_GOLD:
+        from table3_gold_standard import Table3Validator
+        validator = Table3Validator()
+        result = validator.validate_table(rows)
+        return {
+            'passed': result.passed,
+            'checks': result.checks,
+            'errors': result.errors,
+            'warnings': result.warnings,
+        }
+    else:
+        return {'passed': None, 'error': 'Table3 Gold Standard module not available'}
 
 
 if __name__ == "__main__":

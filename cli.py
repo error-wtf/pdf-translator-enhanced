@@ -23,20 +23,26 @@ from typing import Optional
 
 def print_banner():
     """Print CLI banner."""
-    print("""
-╔═══════════════════════════════════════════════════════════╗
-║          PDF Translator Enhanced - CLI                     ║
-║    Scientific PDF Translation with Formula Preservation    ║
-╚═══════════════════════════════════════════════════════════╝
+    try:
+        print("""
++-----------------------------------------------------------+
+|          PDF Translator Enhanced - CLI                     |
+|    Scientific PDF Translation with Formula Preservation    |
++-----------------------------------------------------------+
 """)
+    except UnicodeEncodeError:
+        print("\n=== PDF Translator Enhanced - CLI ===\n")
 
 
 def print_progress(current: int, total: int, message: str, width: int = 40):
     """Print progress bar."""
     percent = current / total if total > 0 else 0
     filled = int(width * percent)
-    bar = "█" * filled + "░" * (width - filled)
-    print(f"\r[{bar}] {percent*100:.1f}% - {message}", end="", flush=True)
+    bar = "#" * filled + "-" * (width - filled)
+    try:
+        print(f"\r[{bar}] {percent*100:.1f}% - {message}", end="", flush=True)
+    except UnicodeEncodeError:
+        print(f"\r{percent*100:.1f}% - {message}", end="", flush=True)
     if current >= total:
         print()
 
@@ -53,17 +59,17 @@ def cmd_translate(args):
     
     input_path = Path(args.input)
     if not input_path.exists():
-        print(f"❌ File not found: {input_path}")
+        print(f"[ERROR] File not found: {input_path}")
         return 1
     
     output_dir = args.output or input_path.parent / "translated"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"📄 Input: {input_path}")
-    print(f"📁 Output: {output_dir}")
-    print(f"🌐 Language: {args.language}")
-    print(f"🤖 Model: {args.model}")
+    print(f"Input: {input_path}")
+    print(f"Output: {output_dir}")
+    print(f"Language: {args.language}")
+    print(f"Model: {args.model}")
     print()
     
     # Create progress tracker
@@ -71,7 +77,7 @@ def cmd_translate(args):
     
     # Check for resume
     if tracker.can_resume() and not args.force:
-        print("⏸️  Found previous progress. Use --force to restart or 'resume' command.")
+        print("Found previous progress. Use --force to restart or 'resume' command.")
         return 0
     
     tracker.start()
@@ -93,29 +99,29 @@ def cmd_translate(args):
             tracker.complete(output_path)
             elapsed = time.time() - start_time
             
-            print(f"\n✅ Translation complete!")
-            print(f"📄 Output: {output_path}")
-            print(f"⏱️  Time: {elapsed:.1f}s")
+            print(f"\n[OK] Translation complete!")
+            print(f"Output: {output_path}")
+            print(f"Time: {elapsed:.1f}s")
             
             # Run QA if requested
             if args.qa:
-                print("\n🔍 Running quality check...")
+                print("\nRunning quality check...")
                 # Simplified QA for CLI
-                print("   Quality check passed ✓")
+                print("   Quality check passed")
             
             return 0
         else:
             tracker.fail(status)
-            print(f"\n❌ Translation failed: {status}")
+            print(f"\n[FAILED] Translation failed: {status}")
             return 1
             
     except KeyboardInterrupt:
-        print("\n\n⚠️  Interrupted. Progress saved. Use 'resume' to continue.")
+        print("\n\nInterrupted. Progress saved. Use 'resume' to continue.")
         tracker.save_checkpoint()
         return 130
     except Exception as e:
         tracker.fail(str(e))
-        print(f"\n❌ Error: {e}")
+        print(f"\n[ERROR] {e}")
         return 1
 
 
@@ -129,7 +135,7 @@ def cmd_batch(args):
     
     input_dir = Path(args.input_dir)
     if not input_dir.exists():
-        print(f"❌ Directory not found: {input_dir}")
+        print(f"[ERROR] Directory not found: {input_dir}")
         return 1
     
     output_dir = Path(args.output) if args.output else input_dir / "translated"
@@ -138,15 +144,15 @@ def cmd_batch(args):
     # Find PDFs
     pdfs = list(input_dir.glob("*.pdf"))
     if not pdfs:
-        print(f"❌ No PDF files found in {input_dir}")
+        print(f"[ERROR] No PDF files found in {input_dir}")
         return 1
     
-    print(f"📁 Input: {input_dir}")
-    print(f"📁 Output: {output_dir}")
-    print(f"📄 Found {len(pdfs)} PDF files")
-    print(f"🌐 Language: {args.language}")
-    print(f"🤖 Model: {args.model}")
-    print(f"👷 Workers: {args.workers}")
+    print(f"Input: {input_dir}")
+    print(f"Output: {output_dir}")
+    print(f"Found {len(pdfs)} PDF files")
+    print(f"Language: {args.language}")
+    print(f"Model: {args.model}")
+    print(f"Workers: {args.workers}")
     print()
     
     processor = BatchProcessor(max_workers=args.workers)
@@ -165,10 +171,10 @@ def cmd_batch(args):
         
         print(f"\n\n{'='*50}")
         print(f"Batch Complete!")
-        print(f"  ✅ Completed: {result.completed}")
-        print(f"  ❌ Failed: {result.failed}")
-        print(f"  ⏱️  Total time: {result.total_duration:.1f}s")
-        print(f"  📊 Success rate: {result.success_rate:.1f}%")
+        print(f"  Completed: {result.completed}")
+        print(f"  Failed: {result.failed}")
+        print(f"  Total time: {result.total_duration:.1f}s")
+        print(f"  Success rate: {result.success_rate:.1f}%")
         
         if result.failed > 0:
             print("\nFailed jobs:")
@@ -180,7 +186,7 @@ def cmd_batch(args):
         
     except KeyboardInterrupt:
         processor.cancel()
-        print("\n\n⚠️  Batch processing cancelled.")
+        print("\n\nBatch processing cancelled.")
         return 130
 
 
@@ -240,26 +246,26 @@ def cmd_cache(args):
     elif args.action == "clear":
         if args.language:
             cache.clear_language(args.language)
-            print(f"✅ Cache cleared for {args.language}")
+            print(f"Cache cleared for {args.language}")
         else:
             confirm = input("Clear entire cache? [y/N] ")
             if confirm.lower() == "y":
                 cache.clear()
-                print("✅ Cache cleared")
+                print("Cache cleared")
             else:
                 print("Cancelled")
                 
     elif args.action == "export":
         path = args.path or "translation_cache.json"
         cache.export_to_json(path)
-        print(f"✅ Cache exported to {path}")
+        print(f"Cache exported to {path}")
         
     elif args.action == "import":
         if not args.path:
-            print("❌ Please specify path with --path")
+            print("[ERROR] Please specify path with --path")
             return 1
         count = cache.import_from_json(args.path)
-        print(f"✅ Imported {count} entries")
+        print(f"Imported {count} entries")
     
     return 0
 

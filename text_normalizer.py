@@ -101,8 +101,9 @@ LIGATURES = {
 }
 
 # Dash/minus variants to normalize
+# NOTE: PRESERVE \u2212 (minus sign) for scientific content!
 DASH_VARIANTS = {
-    '\u2212': '-',  # Minus Sign
+    # '\u2212': '-',  # Minus Sign - KEEP for math formulas!
     '\u2013': '-',  # En Dash
     '\u2014': '-',  # Em Dash
     '\u2015': '-',  # Horizontal Bar

@@ -29,9 +29,14 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 import fitz  # PyMuPDF
 from text_normalizer import normalize_text, normalize_and_reflow, count_garbage_chars
-from caption_anchoring import anchor_captions_to_images, sort_blocks_reading_order, AnchoredFigure
+from caption_anchoring import anchor_captions_to_images, AnchoredFigure
 from table_detector import detect_tables_in_page, DetectedTable
 from scientific_postprocessor import ScientificPostProcessor, RepairMode
+# LaTeX rendered as visual math, not displayed as source code
+from final_cleanup import final_cleanup
+from formula_renderer import render_formula_to_image, detect_formulas, HAS_MATPLOTLIB
+from collision_avoidance import LayoutManager, PlacedRect, ZOrder
+
 
 # Import enhanced formula protection
 from formula_isolator import (
@@ -193,20 +198,22 @@ def extract_with_pymupdf(pdf_path: Path) -> Dict:
             
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
-                    # NORMALIZE each span immediately on extraction
-                    span_text = normalize_text(span.get("text", ""))
+                    # Get raw text from span
+                    span_text = span.get("text", "")
                     text += span_text
                     font_size = span.get("size", 12)
                     font_name = span.get("font", "").lower()
                     is_bold = "bold" in font_name
                 text += "\n"
             
-            # Normalize the complete block text
-            normalized_text = normalize_text(text.strip())
+            # Store BOTH raw and normalized versions
+            raw_text = text.strip()
+            normalized_text = normalize_text(raw_text)
             
             if normalized_text:
                 result["text_blocks"].append({
                     "text": normalized_text,
+                    "raw_text": raw_text,  # Store raw for passthrough mode
                     "x": block["bbox"][0],
                     "y": block["bbox"][1],
                     "width": block["bbox"][2] - block["bbox"][0],
@@ -215,61 +222,156 @@ def extract_with_pymupdf(pdf_path: Path) -> Dict:
                     "is_bold": is_bold
                 })
     
-    # Sort blocks by reading order (top-to-bottom, left-to-right)
-    result["text_blocks"] = sort_blocks_reading_order(result["text_blocks"])
+    # Sort blocks by reading order (handles two-column layouts!)
+    result["text_blocks"] = sort_blocks_reading_order(
+        result["text_blocks"], 
+        page_width=result["page_width"]
+    )
     
     doc.close()
     return result
 
 
-def sort_blocks_reading_order(blocks: List[Dict]) -> List[Dict]:
+def detect_columns(blocks: List[Dict], page_width: float) -> int:
     """
-    Sort text blocks in reading order.
+    Detect if page has multi-column layout.
     
-    Strategy:
-    - Primary sort by y position (top to bottom)
-    - Secondary sort by x position (left to right)
-    - Group blocks that are on the same "line" (similar y)
+    Returns number of detected columns (1, 2, or 3).
+    
+    Handles academic papers with full-width headers + two-column content.
+    """
+    if not blocks or len(blocks) < 4:
+        return 1
+    
+    page_half = page_width / 2
+    margin = 50  # Typical page margin
+    
+    # Separate full-width blocks (headers/titles) from column content
+    # A block is "full-width" if it spans most of the page
+    full_width_threshold = page_width * 0.6
+    
+    column_blocks = []
+    for b in blocks:
+        block_width = b["width"]
+        # Skip blocks that span more than 60% of page (headers, titles)
+        if block_width < full_width_threshold:
+            column_blocks.append(b)
+    
+    # If not enough column blocks after filtering, single column
+    if len(column_blocks) < 4:
+        return 1
+    
+    # Analyze the narrower blocks for column structure
+    # Get x-centers of column blocks
+    left_blocks = []
+    right_blocks = []
+    
+    for b in column_blocks:
+        block_center = b["x"] + b["width"] / 2
+        # Check if block is clearly in left or right half
+        if block_center < page_half - 20:
+            left_blocks.append(b)
+        elif block_center > page_half + 20:
+            right_blocks.append(b)
+    
+    # Two-column if we have significant content on both sides
+    min_blocks_per_column = 2
+    if len(left_blocks) >= min_blocks_per_column and len(right_blocks) >= min_blocks_per_column:
+        # Additional check: columns should not overlap horizontally
+        if left_blocks and right_blocks:
+            left_right_edge = max(b["x"] + b["width"] for b in left_blocks)
+            right_left_edge = min(b["x"] for b in right_blocks)
+            # There should be a gap between columns
+            if right_left_edge > left_right_edge:
+                return 2
+    
+    return 1
+
+
+def sort_blocks_reading_order(blocks: List[Dict], page_width: float = 612) -> List[Dict]:
+    """
+    Sort text blocks in reading order, handling multi-column layouts.
+    
+    Strategy for single column:
+    - Sort by y position (top to bottom)
+    
+    Strategy for two columns:
+    - First: full-width headers (sorted by Y)
+    - Then: left column top-to-bottom
+    - Finally: right column top-to-bottom
+    - This prevents interleaving of column text!
     """
     if not blocks:
         return blocks
     
-    # Calculate average line height for grouping
-    avg_height = sum(b["height"] for b in blocks) / len(blocks) if blocks else 20
-    y_threshold = avg_height * 0.5  # Blocks within this y-distance are on same "line"
+    # Detect column layout
+    num_columns = detect_columns(blocks, page_width)
     
-    # Sort by y first, then x
-    sorted_blocks = sorted(blocks, key=lambda b: (b["y"], b["x"]))
+    if num_columns == 2:
+        # TWO-COLUMN LAYOUT with potential full-width headers
+        page_center = page_width / 2
+        full_width_threshold = page_width * 0.6
+        
+        header_blocks = []  # Full-width blocks (titles, headers)
+        left_blocks = []
+        right_blocks = []
+        
+        for block in blocks:
+            block_width = block["width"]
+            block_center = block["x"] + block_width / 2
+            
+            # Full-width blocks go to headers
+            if block_width >= full_width_threshold:
+                header_blocks.append(block)
+            # Narrow blocks go to left or right column
+            elif block_center < page_center:
+                left_blocks.append(block)
+            else:
+                right_blocks.append(block)
+        
+        # Sort each group by Y (top to bottom)
+        header_blocks.sort(key=lambda b: b["y"])
+        left_blocks.sort(key=lambda b: b["y"])
+        right_blocks.sort(key=lambda b: b["y"])
+        
+        # Return: headers first, then left column, then right column
+        return header_blocks + left_blocks + right_blocks
     
-    # Group blocks by approximate y position (same line)
-    lines = []
-    current_line = []
-    current_y = None
-    
-    for block in sorted_blocks:
-        if current_y is None:
-            current_y = block["y"]
-            current_line = [block]
-        elif abs(block["y"] - current_y) <= y_threshold:
-            current_line.append(block)
-        else:
-            # Sort current line by x and add to lines
+    else:
+        # SINGLE COLUMN: Simple top-to-bottom, left-to-right
+        # Calculate average line height for grouping
+        avg_height = sum(b["height"] for b in blocks) / len(blocks) if blocks else 20
+        y_threshold = avg_height * 0.5
+        
+        # Sort by y first, then x
+        sorted_blocks = sorted(blocks, key=lambda b: (b["y"], b["x"]))
+        
+        # Group blocks by approximate y position (same line)
+        lines = []
+        current_line = []
+        current_y = None
+        
+        for block in sorted_blocks:
+            if current_y is None:
+                current_y = block["y"]
+                current_line = [block]
+            elif abs(block["y"] - current_y) <= y_threshold:
+                current_line.append(block)
+            else:
+                current_line.sort(key=lambda b: b["x"])
+                lines.append(current_line)
+                current_line = [block]
+                current_y = block["y"]
+        
+        if current_line:
             current_line.sort(key=lambda b: b["x"])
             lines.append(current_line)
-            current_line = [block]
-            current_y = block["y"]
-    
-    # Don't forget the last line
-    if current_line:
-        current_line.sort(key=lambda b: b["x"])
-        lines.append(current_line)
-    
-    # Flatten back to list
-    result = []
-    for line in lines:
-        result.extend(line)
-    
-    return result
+        
+        result = []
+        for line in lines:
+            result.extend(line)
+        
+        return result
 
 
 def merge_extractions(marker_text: Optional[str], pymupdf_data: Dict) -> Dict:
@@ -457,6 +559,10 @@ def translate_text(text: str, model: str, target_language: str,
     """Translate text using Ollama or OpenAI, protecting formulas."""
     from pdf_marker_translator import translate_text_chunk
     
+    # PASSTHROUGH MODE: Return text unchanged for exact 1:1 reproduction
+    if target_language.upper() in ["PASSTHROUGH", "ORIGINAL", "NONE", "ENGLISH"]:
+        return text
+    
     # Protect formulas before translation (returns restore function)
     protected_text, restore_func = protect_formulas(text)
     
@@ -468,6 +574,19 @@ def translate_text(text: str, model: str, target_language: str,
     
     # Restore formulas using the restore function
     result = restore_func(translated)
+    
+    # POST-PROCESS: Restore Greek letters that LLM might have corrupted
+    # Check for common LLM corruption patterns and fix them
+    greek_fixes = [
+        (r'\bsigma\s*0\b', 'σ0'),  # "sigma 0" -> σ0
+        (r'\bsigma\s*\(', 'σ('),   # "sigma (" -> σ(
+        (r'=\s*sigma\b', '= σ'),   # "= sigma" -> = σ
+        (r'\(\s*sigma\s*\)', '(σ)'),  # "(sigma)" -> (σ)
+        (r'\bkappa\s*\(', 'κ('),   # "kappa (" -> κ(
+        (r'\brho\s*c', 'ρc'),      # "rho c" -> ρc
+    ]
+    for pattern, replacement in greek_fixes:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     
     # Normalize output for clean Unicode
     result = normalize_output(result, mode="unicode")
@@ -503,6 +622,25 @@ def create_translated_page(
         height=page_data["page_height"]
     )
     
+    # Embed Unicode font that supports Greek + Latin + German
+    unicode_font = None
+    unicode_font_name = "helv"  # Fallback
+    font_paths = [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/calibri.ttf",
+        "C:/Windows/Fonts/DejaVuSans.ttf",
+    ]
+    for fp in font_paths:
+        if Path(fp).exists():
+            try:
+                unicode_font = fitz.Font(fontfile=fp)
+                unicode_font_name = "unicode"
+                new_page.insert_font(fontname=unicode_font_name, fontbuffer=unicode_font.buffer)
+                logger.debug(f"Using Unicode font: {fp}")
+                break
+            except Exception as e:
+                logger.warning(f"Could not load font {fp}: {e}")
+    
     # Insert images first (background layer)
     for i, img in enumerate(page_data["images"]):
         try:
@@ -523,6 +661,79 @@ def create_translated_page(
     total_blocks = len(page_data["text_blocks"])
     inserted_count = 0
     
+    # Layout parameters - MORE SPACE for text
+    top_margin = 30
+    bottom_margin = page_data["page_height"] - 20  # Allow text closer to bottom
+    left_margin = 50
+    right_margin = page_data["page_width"] - 50
+    block_gap = 12  # Minimum gap between blocks
+    
+    # Initialize LayoutManager for collision-free placement (Phase 1)
+    layout_mgr = LayoutManager(
+        page_width=page_data["page_width"],
+        page_height=page_data["page_height"],
+        top_margin=top_margin,
+        bottom_margin=page_data["page_height"] - bottom_margin,
+        left_margin=left_margin,
+        right_margin=page_data["page_width"] - right_margin,
+        num_columns=1  # Could detect from page structure
+    )
+    
+    # Add image rects as blockers (Z-Order: Images first)
+    for i, img in enumerate(page_data["images"]):
+        layout_mgr.add_image(
+            x=img["x"], y=img["y"],
+            width=img["width"], height=img["height"],
+            block_id=i,
+            padding=5.0
+        )
+    
+    # Legacy: Track placed rectangles for collision detection
+    placed_rects = [r.as_fitz_rect() for r in layout_mgr.blocked_zones]
+    
+    # Global y_cursor for flow layout
+    current_y = top_margin
+    
+    def estimate_text_height(text: str, font_size: float, box_width: float) -> float:
+        """Estimate text height after wrapping."""
+        avg_char_width = font_size * 0.5  # Approximate
+        chars_per_line = max(1, int(box_width / avg_char_width))
+        
+        total_lines = 0
+        for paragraph in text.split('\n'):
+            if not paragraph.strip():
+                total_lines += 1
+            else:
+                lines_needed = max(1, (len(paragraph) + chars_per_line - 1) // chars_per_line)
+                total_lines += lines_needed
+        
+        line_height = font_size * 1.3  # Leading factor
+        return total_lines * line_height + 8  # Add padding
+    
+    def find_non_overlapping_y(rect: fitz.Rect, placed: list, gap: float) -> float:
+        """Find the lowest y position that doesn't overlap with placed rects."""
+        y = rect.y0
+        max_iterations = 50  # Prevent infinite loop
+        
+        for _ in range(max_iterations):
+            test_rect = fitz.Rect(rect.x0, y, rect.x1, y + rect.height)
+            has_overlap = False
+            
+            for placed_rect in placed:
+                if test_rect.intersects(placed_rect):
+                    has_overlap = True
+                    # Move below the overlapping rect
+                    y = placed_rect.y1 + gap
+                    break
+            
+            if not has_overlap:
+                return y
+        
+        return y  # Return best effort
+    
+    # Check if passthrough mode
+    is_passthrough = target_language.upper() in ["PASSTHROUGH", "ORIGINAL", "NONE", "ENGLISH"]
+    
     for i, block in enumerate(page_data["text_blocks"]):
         if not block["text"].strip():
             continue
@@ -530,77 +741,267 @@ def create_translated_page(
         if progress_callback:
             progress_callback(i + 1, total_blocks, f"Block {i + 1}/{total_blocks}")
         
-        # Translate
-        translated = translate_text(
-            block["text"], model, target_language,
-            use_openai, openai_api_key
-        )
+        # PASSTHROUGH MODE: Use raw text for exact 1:1 reproduction
+        if is_passthrough:
+            translated = block.get("raw_text", block["text"])
+        else:
+            # Translate
+            translated = translate_text(
+                block["text"], model, target_language,
+                use_openai, openai_api_key
+            )
+            
+            if not translated or not translated.strip():
+                translated = block["text"]  # Keep original if translation failed
+            
+            # Apply scientific post-processing
+            mode = RepairMode.SAFE_REPAIR if repair_mode == "safe_repair" else RepairMode.STRICT
+            postprocessor = ScientificPostProcessor(mode)
+            translated, _ = postprocessor.process(translated)
         
-        if not translated or not translated.strip():
-            translated = block["text"]  # Keep original if translation failed
+        # Render LaTeX formulas as visual math images INLINE
+        block_formula_images = []
+        if HAS_MATPLOTLIB:
+            formulas = detect_formulas(translated)
+            if formulas:
+                # Render each formula and store for inline insertion
+                for latex_content, display_type, start, end in reversed(formulas):
+                    rendered = render_formula_to_image(latex_content, fontsize=12)
+                    if rendered:
+                        formula_img_path = images_dir / f"formula_{page_num}_{i}_{len(block_formula_images)}.png"
+                        formula_img_path.write_bytes(rendered.image_bytes)
+                        # Remove LaTeX from text completely - image will be inserted inline
+                        translated = translated[:start] + translated[end:]
+                        block_formula_images.append((formula_img_path, rendered, display_type))
         
-        # Apply scientific post-processing
-        mode = RepairMode.SAFE_REPAIR if repair_mode == "safe_repair" else RepairMode.STRICT
-        postprocessor = ScientificPostProcessor(mode)
-        translated, _ = postprocessor.process(translated)
+        # Apply SSZ glossary fixes for German translations
+        if target_language.lower() == "german":
+            try:
+                from ssz_glossary import fix_mistranslations
+                translated = fix_mistranslations(translated, "German")
+            except ImportError:
+                pass  # Glossary not available
+        
+        # Apply final cleanup (soft-hyphens, split units, stray ?)
+        translated, _ = final_cleanup(translated)
         
         # Calculate font size - start with original, but allow shrinking
         font_size = min(block["font_size"], 10)
         if font_size < 6:
             font_size = 8
         
-        # Create rect with some padding for text overflow
-        x0 = max(10, block["x"])
-        y0 = max(10, block["y"])
-        x1 = min(page_data["page_width"] - 10, block["x"] + block["width"] + 50)
-        y1 = min(page_data["page_height"] - 10, block["y"] + block["height"] + 20)
+        # DIRECT PLACEMENT: Use original position, no collision avoidance
+        # This preserves the original layout structure
+        x0 = max(block["x"], 5)  # Small margin from edge
+        y0 = max(block["y"], 5)
+        
+        # Use full page width for text (allows proper wrapping)
+        box_width = page_data["page_width"] - x0 - 20
+        
+        # Estimate height based on text length
+        chars_per_line = max(1, int(box_width / (font_size * 0.5)))
+        num_lines = max(1, len(translated) // chars_per_line + 1)
+        required_height = max(block["height"], num_lines * (font_size + 2))
+        
+        x1 = min(x0 + box_width, page_data["page_width"] - 5)
+        y1 = min(y0 + required_height, page_data["page_height"] - 5)
         
         text_rect = fitz.Rect(x0, y0, x1, y1)
         
-        # Replace problematic Unicode with ASCII equivalents
+        # RESTORE Greek letters that LLM might have converted to names
+        greek_restore = {
+            r'\bsigma\b': 'σ', r'\bSigma\b': 'Σ',
+            r'\balpha\b': 'α', r'\bAlpha\b': 'Α',
+            r'\bbeta\b': 'β', r'\bBeta\b': 'Β',
+            r'\bgamma\b': 'γ', r'\bGamma\b': 'Γ',
+            r'\bdelta\b': 'δ', r'\bDelta\b': 'Δ',
+            r'\bkappa\b': 'κ', r'\bKappa\b': 'Κ',
+            r'\bpi\b': 'π', r'\bPi\b': 'Π',
+            r'\brho\b': 'ρ', r'\bRho\b': 'Ρ',
+            r'\beta\b': 'η', r'\bEta\b': 'Η',
+            r'\bomega\b': 'ω', r'\bOmega\b': 'Ω',
+            r'\bxi\b': 'ξ', r'\bXi\b': 'Ξ',
+            r'\bmu\b': 'μ', r'\bnu\b': 'ν',
+            r'\btau\b': 'τ', r'\bphi\b': 'φ',
+            r'\bchi\b': 'χ', r'\bpsi\b': 'ψ',
+            r'\blambda\b': 'λ', r'\bLambda\b': 'Λ',
+            r'\btheta\b': 'θ', r'\bTheta\b': 'Θ',
+            r'\bepsilon\b': 'ε', r'\bzeta\b': 'ζ',
+        }
+        for pattern, greek in greek_restore.items():
+            translated = re.sub(pattern, greek, translated, flags=re.IGNORECASE)
+        
+        # Replace problematic Unicode with ASCII equivalents (ONLY non-math symbols)
         translated = translated.replace('●', '-').replace('■', '-').replace('•', '-')
-        translated = translated.replace('→', '->').replace('←', '<-').replace('↔', '<->')
         translated = translated.replace('✓', '[x]').replace('✗', '[ ]').replace('✔', '[x]')
         translated = translated.replace('★', '*').replace('☆', '*').replace('⭐', '*')
         translated = translated.replace('📄', '').replace('📁', '').replace('🔄', '')
+        translated = translated.replace('–', '-').replace('—', '-')
+        # Convert Unicode asterisk to ASCII (font compatibility)
+        translated = translated.replace('∗', '*')  # U+2217 → ASCII *
+        translated = re.sub(r'(\d)\s*\*\s*10\^', r'\1 x 10^', translated)
+        translated = re.sub(r'(\d),(\d)\s*x\s*10', r'\1.\2 x 10', translated)
         
-        # Try insert_textbox first with auto-shrink
-        try:
-            rc = new_page.insert_textbox(
-                text_rect,
-                translated,
-                fontsize=font_size,
-                fontname="helv",
-                align=fitz.TEXT_ALIGN_LEFT,
-                expandtabs=True
-            )
-            # rc < 0 means text didn't fit, but some was inserted
-            # rc >= 0 means all text fit
-            inserted_count += 1
-            logger.debug(f"Page {page_num} block {i}: inserted with rc={rc}")
-        except Exception as e:
-            # Fallback: use insert_text line by line
-            logger.warning(f"Page {page_num} block {i}: textbox failed ({e}), using line-by-line")
+        # ROBUST TEXT INSERTION - ensure valid rect dimensions
+        min_width = max(200, len(translated) * font_size * 0.3)  # Estimate needed width
+        min_height = max(20, font_size * 2)
+        
+        # Expand rect if too small
+        if text_rect.width < min_width:
+            text_rect = fitz.Rect(x0, y0, x0 + min_width, y1)
+        if text_rect.height < min_height:
+            text_rect = fitz.Rect(x0, y0, text_rect.x1, y0 + min_height)
+        
+        # Clamp to page bounds
+        if text_rect.x1 > page_data["page_width"] - 20:
+            text_rect = fitz.Rect(x0, y0, page_data["page_width"] - 20, text_rect.y1)
+        if text_rect.y1 > bottom_margin:
+            text_rect = fitz.Rect(x0, y0, text_rect.x1, bottom_margin)
+        
+        text_inserted = False
+        
+        # Method 1: insert_textbox with ADAPTIVE font size
+        if text_rect.width > 50 and text_rect.height > 10:
             try:
-                lines = translated.split('\n')
-                y_pos = y0 + font_size
-                for line in lines[:20]:  # Limit lines to prevent overflow
-                    if y_pos > y1:
+                # Try progressively smaller fonts until text fits
+                for try_size in [font_size, font_size - 1, font_size - 2, 6, 5]:
+                    if try_size < 5:
+                        break
+                    rc = new_page.insert_textbox(
+                        text_rect,
+                        translated,
+                        fontsize=try_size,
+                        fontname=unicode_font_name,
+                        align=fitz.TEXT_ALIGN_LEFT,
+                        expandtabs=True
+                    )
+                    # rc > 0 means overflow, rc < 0 means error
+                    if rc >= 0:
+                        text_inserted = True
+                        inserted_count += 1
+                        placed_rects.append(text_rect)
+                        break
+            except Exception as e:
+                logger.debug(f"textbox failed: {e}")
+        
+        # Method 2: Line-by-line with word wrapping and SMALLER font
+        if not text_inserted:
+            try:
+                use_size = min(font_size, 7)  # Use smaller font for fallback
+                words = translated.split()
+                lines = []
+                current_line = []
+                max_chars = int(text_rect.width / (use_size * 0.45))
+                
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    if len(test_line) <= max_chars:
+                        current_line.append(word)
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                        current_line = [word]
+                if current_line:
+                    lines.append(' '.join(current_line))
+                
+                y_pos = y0 + use_size
+                for line in lines:
+                    if y_pos > page_data["page_height"] - 10:  # Use full page
                         break
                     new_page.insert_text(
                         (x0, y_pos),
-                        line[:200],  # Limit line length
-                        fontsize=font_size,
-                        fontname="helv"
+                        line,
+                        fontsize=use_size,
+                        fontname=unicode_font_name
                     )
-                    y_pos += font_size + 2
+                    y_pos += use_size + 1
+                text_inserted = True
                 inserted_count += 1
-            except Exception as e2:
-                logger.error(f"Page {page_num} block {i}: all text insertion failed: {e2}")
+                placed_rects.append(text_rect)
+            except Exception as e:
+                logger.error(f"Page {page_num} block {i}: text insertion failed: {e}")
+        
+        # Method 3: LAST RESORT - direct insert_text for any remaining text
+        if not text_inserted and translated.strip():
+            try:
+                new_page.insert_text(
+                    (x0, y0 + 10),
+                    translated[:500],  # Limit to prevent overflow
+                    fontsize=6,
+                    fontname=unicode_font_name
+                )
+                text_inserted = True
+                inserted_count += 1
+                logger.debug(f"Block {i}: used last resort insert_text")
+            except Exception as e:
+                logger.error(f"Block {i}: ALL methods failed: {e}")
+        
+        # Insert formula images INLINE
+        if block_formula_images:
+            for img_path, rendered, display_type in block_formula_images:
+                try:
+                    if img_path.exists():
+                        img_width = rendered.width * 0.5
+                        img_height = rendered.height * 0.5
+                        x_pos = (page_data["page_width"] - img_width) / 2 if display_type == 'display' else x0 + 20
+                        img_rect = fitz.Rect(x_pos, current_y, x_pos + img_width, current_y + img_height)
+                        final_y = find_non_overlapping_y(img_rect, placed_rects, block_gap)
+                        img_rect = fitz.Rect(x_pos, final_y, x_pos + img_width, final_y + img_height)
+                        new_page.insert_image(img_rect, filename=str(img_path))
+                        placed_rects.append(img_rect)
+                        current_y = img_rect.y1 + block_gap
+                except Exception as e:
+                    logger.warning(f"Failed to insert inline formula: {e}")
     
     logger.info(f"Page {page_num}: Inserted {inserted_count}/{total_blocks} text blocks")
     
+    # GREEK VERIFICATION: Check if any Greek letters were lost and log warning
+    greek_letters = 'αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ'
+    original_greek = sum(1 for c in ''.join(b['text'] for b in page_data['text_blocks']) if c in greek_letters)
+    
+    # Read back the rendered page to verify
     new_doc.save(str(output_path))
+    
+    # Reopen to check what was actually rendered
+    verify_doc = fitz.open(str(output_path))
+    rendered_text = verify_doc[0].get_text()
+    rendered_greek = sum(1 for c in rendered_text if c in greek_letters)
+    verify_doc.close()
+    
+    if rendered_greek < original_greek:
+        logger.warning(f"Page {page_num}: Greek letters lost ({original_greek} -> {rendered_greek})")
+        # Try to add missing Greek letters by re-inserting problematic blocks
+        missing_count = original_greek - rendered_greek
+        if missing_count <= 5:  # Small number of missing letters
+            # Find blocks with Greek that might not have rendered
+            reopen_doc = fitz.open(str(output_path))
+            page = reopen_doc[0]
+            modified = False
+            for block in page_data['text_blocks']:
+                block_greek = sum(1 for c in block['text'] if c in greek_letters)
+                if block_greek > 0 and len(block['text']) < 100:  # Small block with Greek
+                    x0, y0 = block.get('x', 50), block.get('y', 50)
+                    try:
+                        page.insert_text(
+                            (x0, y0 + 8),
+                            block['text'][:200],
+                            fontsize=6,
+                            fontname=unicode_font_name
+                        )
+                        modified = True
+                        logger.info(f"Page {page_num}: Re-inserted Greek block: {block['text'][:30]}...")
+                    except:
+                        pass
+            if modified:
+                # Save to temp file then replace
+                temp_path = str(output_path) + ".tmp"
+                reopen_doc.save(temp_path)
+                reopen_doc.close()
+                import shutil
+                shutil.move(temp_path, str(output_path))
+            else:
+                reopen_doc.close()
+    
     new_doc.close()
     return True
 
@@ -781,7 +1182,7 @@ def translate_pdf_unified(
         total_pages = len(page_paths)
         
         if total_pages == 0:
-            return None, "❌ Could not extract pages from PDF"
+            return None, "[ERROR] Could not extract pages from PDF"
         
         translated_page_paths = []
         
@@ -878,25 +1279,25 @@ def translate_pdf_unified(
             # Build status message with sanity report
             warnings_text = ""
             if sanity_report["warnings"]:
-                warnings_text = "\n⚠️ " + "\n⚠️ ".join(sanity_report["warnings"])
+                warnings_text = "\n[WARN] " + "\n[WARN] ".join(sanity_report["warnings"])
             
-            return str(output_pdf), f"""✅ Unified Translation Complete!
+            return str(output_pdf), f"""Unified Translation Complete!
 
-📄 **{sanity_report['page_count']} pages** (source: {total_pages})
-🔬 Marker extraction for formulas
-📐 PyMuPDF for layout preservation
-🖼️ Images extracted and preserved
-🌐 Translated to {target_language}
-🧹 Blank pages removed: {sanity_report['blank_pages_removed']}
-🔍 Garbage chars found: {sanity_report['garbage_chars_found']}{warnings_text}
+Pages: {sanity_report['page_count']} (source: {total_pages})
+Marker extraction for formulas
+PyMuPDF for layout preservation
+Images extracted and preserved
+Translated to {target_language}
+Blank pages removed: {sanity_report['blank_pages_removed']}
+Garbage chars found: {sanity_report['garbage_chars_found']}{warnings_text}
 
-📁 Also saved to: {stable_output}"""
+Also saved to: {stable_output}"""
         
-        return None, "❌ Failed to merge translated pages"
+        return None, "[ERROR] Failed to merge translated pages"
         
     except Exception as e:
         logger.exception(f"Unified translation failed: {e}")
-        return None, f"❌ Translation failed: {str(e)}"
+        return None, f"[ERROR] Translation failed: {str(e)}"
 
 
 # CLI interface
