@@ -1,5 +1,13 @@
 # 📄 PDF Translator Enhanced v2.0
 
+---> THIS REPO IS ONLY A TRY AND IS NOT REALY WORKING 100% <---
+
+---
+OCR AND TESERACT CANT ENSURE ON EVERY PDF 100% CORRECT TRANSCRIPTION
+THIS REPO WAS ONLY MADE TO INVESTIGATE POSSIBLE PROBLEM WITH TRANSCRIPTION
+IT IS MORE LIKE A PREBUILD - BUT NO REAL FINAL VERSION !!!
+---
+
 **Translate scientific PDFs with 100% formula preservation and professional quality**
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/error-wtf/pdf-translator-enhanced/blob/main/PDF_Translator_Colab.ipynb)
