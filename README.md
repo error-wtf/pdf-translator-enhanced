@@ -1,6 +1,6 @@
 # 📄 PDF Translator Enhanced v2.0
 
-# ---> THIS REPO IS ONLY A TRY AND IS NOT REALY WORKING 100% <---
+## ---> THIS REPO IS ONLY A TRY AND IS NOT REALY WORKING 100% <---
 
 ---
 
